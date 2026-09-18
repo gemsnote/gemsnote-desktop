@@ -193,6 +193,19 @@ jobs:
         shell: bash
         run: go install github.com/wailsapp/wails/v2/cmd/wails@${WAILS_VERSION}
 
+      - name: Install NSIS
+        if: matrix.archive == 'nsis'
+        shell: pwsh
+        run: |
+          choco install nsis --version=3.12.0 --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "NSIS installation failed: $LASTEXITCODE" }
+          $nsisDir = Join-Path ${env:ProgramFiles(x86)} 'NSIS'
+          $makensis = Join-Path $nsisDir 'makensis.exe'
+          if (-not (Test-Path -PathType Leaf $makensis)) { throw "makensis not found at $makensis" }
+          $nsisDir | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & $makensis -VERSION
+          if ($LASTEXITCODE -ne 0) { throw "makensis check failed: $LASTEXITCODE" }
+
       - name: Build desktop application
         shell: bash
         working-directory: gemsnote/desktop-app
