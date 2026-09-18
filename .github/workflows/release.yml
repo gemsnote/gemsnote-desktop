@@ -98,7 +98,12 @@ jobs:
         run: |
           npm ci
           npm test -- --run
-          npm run build
+
+      # go test compiles main.go, whose embed directive requires frontend/dist.
+      # Use the same frontend preparation hook as the Wails release build.
+      - name: Prepare desktop embedded frontend
+        working-directory: gemsnote/desktop-app
+        run: bash build-frontend.sh
 
       - name: Test desktop application
         working-directory: gemsnote/desktop-app
