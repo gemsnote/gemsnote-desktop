@@ -1,0 +1,18 @@
+.DS_Store
+.settings
+.project
+
+# Wails build artifacts
+/gemsnote
+.env
+.env.*
+*.log
+/frontend/dist/
+/frontend/wailsjs/
+/build/bin/
+/build/appimage/
+/release/
+/tmp
+
+node_modules
+.omo
