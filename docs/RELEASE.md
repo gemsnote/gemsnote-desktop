@@ -11,7 +11,7 @@ gemsnote/
 └── desktop-app/
 ```
 
-版本号集中定义在 `desktop-app/api2/version.go` 的 `ClientVersion`。脚本会拒绝与该版本不一致的构建参数。
+版本号集中定义在 `api/version.go` 的 `ClientVersion`。脚本会拒绝与该版本不一致的构建参数。
 
 ## 支持的平台
 

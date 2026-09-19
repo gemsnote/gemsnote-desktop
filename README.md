@@ -1,47 +1,21 @@
-# Gemsnote Desktop
+# Gemsnote Desktop（珠玑笔记）
 
-Gemsnote（珠玑笔记）桌面客户端，基于 Go + Wails v2。离线优先：数据存储在本地 SQLite，通过 USN 增量同步与 gemsnote 服务器保持一致；UI 复用 [gemsnote](https://github.com/gemsnote/gemsnote) 主仓库的 Vue Web 前端。
+Gemsnote Desktop 是基于 [Leanote Desktop](https://github.com/leanote/desktop-app) 完全重构的桌面客户端。原版实现基于 Electron；本项目改用 Go + Wails，运行性能更好、发布包体积更小，并针对 Gemsnote 重新设计了整个 UI，与 Web 端保持一致。
 
-> 本项目基于 Leanote Electron 桌面端改写。
+客户端使用全新的 API2 与 Gemsnote 服务端通信，本地数据使用 SQLite 保存，支持离线查看和编辑，并在联网后进行同步。笔记、笔记本、标签、历史版本和附件等数据保存在本机；账号、共享笔记及服务端管理功能按服务端权限工作。
 
-## 架构
+## 下载、安装和使用
 
-```
-Vue SPA（主仓库 frontend/ 构建产物，embed 进二进制）
-   │  fetch 相对路径（/api2/*）
-   ▼
-webapi.Handler  ←  本地 API 兼容层（响应契约与 Revel 端 WebController 一致）
-   │                    │
-   │ 本地读写            │ 服务器专属功能代理
-   ▼                    ▼
-SQLite (db/)      gemsnote 服务器（共享/分组/管理/邮箱，cookie 会话）
-   ▲
-sync/ (USN 增量同步, /api2 开放 API + token)
-```
+请先安装与操作系统和 CPU 架构匹配的 Release 包。Linux、macOS 和 Windows 的安装方式、首次登录、服务端配置、本地数据目录和备份说明见 [快速开始](docs/QUICK_START.md)。
 
-- 服务器专属功能（共享协作、分组、管理后台、注册/找回密码、邮箱验证、头像）需要在线，由兼容层转发；
-- 笔记、笔记本、标签、回收站、附件、图片、历史版本离线可用，改动经同步服务上行；
-- 内容中的图片统一使用相对路径 `/api2/file/getImage?fileId=...`，由本地 Handler 直接从磁盘提供；
-- 兼容层保留对历史数据中 `leanote://` 图片协议的识别与旧 `leanote` 数据目录的自动迁移。
+## 开发与构建
 
-## 构建
+源码开发、项目结构、API2、本地 SQLite、前端资源、测试、平台依赖和 Release 构建说明见 [开发指南](docs/DEVELOPMENT.md)。完整的多平台发布参数也可参考 [Release 构建说明](docs/RELEASE.md)。
 
-```bash
-# 1. 构建前端（或直接运行 wails build，frontend:build 钩子会自动执行）
-bash build-frontend.sh
+## 服务端
 
-# 2. 编译（需要各平台 webkit 依赖；Linux 需 libgtk-3-dev libwebkit2gtk-4.1-dev）
-go build -o gemsnote .
-# 或
-wails build
-```
+客户端需要连接 Gemsnote 服务端。服务端源码、数据库配置、迁移和部署文档位于 [Gemsnote 主仓库](https://github.com/gemsnote/gemsnote)。
 
-## 开发
+## 许可证
 
-```bash
-wails dev
-```
-
-## 数据
-
-数据目录：`~/.config/gemsnote`（Windows: `%APPDATA%/gemsnote`，macOS: `~/Library/Application Support/gemsnote`）。首次启动会自动迁移旧 `leanote` 目录的数据。
+本项目沿用 Leanote Desktop 的开源基础，并在本项目许可证及原项目许可证允许的范围内进行修改和分发。
