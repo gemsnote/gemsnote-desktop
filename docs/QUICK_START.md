@@ -20,7 +20,7 @@ chmod +x gemsnote-1.0.0-linux-amd64.AppImage
 ./gemsnote-1.0.0-linux-amd64.AppImage
 ```
 
-Linux ZIP 包可以将 `.desktop` 文件复制到 `~/.local/share/applications/`，以便从应用菜单启动。macOS 首次打开若出现安全提示，请在“系统设置 → 隐私与安全性”中允许。Windows 安装程序会创建开始菜单和桌面快捷方式。
+Linux ZIP 包可以将 `.desktop` 文件复制到 `~/.local/share/applications/`，以便从应用菜单启动。Linux 中文桌面会显示“珠玑笔记”，其它语言显示 “Gemsnote”。macOS 首次打开若出现安全提示，请在“系统设置 → 隐私与安全性”中允许；应用名称会随系统语言显示为“珠玑笔记”或 “Gemsnote”。Windows 安装程序会根据安装时的系统语言创建中文或英文的开始菜单、桌面快捷方式和卸载项。
 
 ## 首次连接服务端
 

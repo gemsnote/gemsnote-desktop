@@ -130,6 +130,9 @@ EOF
 [Desktop Entry]
 Type=Application
 Name=Gemsnote
+Name[zh]=珠玑笔记
+Name[zh_CN]=珠玑笔记
+Name[zh_Hans]=珠玑笔记
 Comment=珠玑笔记
 Exec=gemsnote
 Icon=gemsnote
@@ -152,6 +155,11 @@ EOF
 else
   app="$desktop_dir/build/bin/gemsnote.app"
   [[ -d "$app" ]] || { echo "Wails output not found: $app" >&2; exit 1; }
+  resources="$app/Contents/Resources"
+  mkdir -p "$resources/en.lproj" "$resources/zh-Hans.lproj" "$resources/zh-Hant.lproj"
+  printf '%s\n' '"CFBundleDisplayName" = "Gemsnote";' '"CFBundleName" = "Gemsnote";' > "$resources/en.lproj/InfoPlist.strings"
+  printf '%s\n' '"CFBundleDisplayName" = "珠玑笔记";' '"CFBundleName" = "珠玑笔记";' > "$resources/zh-Hans.lproj/InfoPlist.strings"
+  cp "$resources/zh-Hans.lproj/InfoPlist.strings" "$resources/zh-Hant.lproj/InfoPlist.strings"
   archive="$output_dir/$asset.dmg"
   rm -f "$archive"
   hdiutil create -volname "Gemsnote $version" -srcfolder "$app" -ov -format UDZO "$archive" >/dev/null

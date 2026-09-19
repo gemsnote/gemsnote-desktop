@@ -34,6 +34,9 @@ Unicode true
 ####
 !include "wails_tools.nsh"
 
+; Keep the executable and internal package identifiers stable, while letting
+; Windows display a localized application name in the installer and shortcuts.
+
 # The version information for this two must consist of 4 parts
 VIProductVersion "${INFO_PRODUCTVERSION}.0"
 VIFileVersion    "${INFO_PRODUCTVERSION}.0"
@@ -65,14 +68,18 @@ ManifestDPIAware true
 !insertmacro MUI_UNPAGE_INSTFILES # Uinstalling page
 
 !insertmacro MUI_LANGUAGE "English" # Set the Language of the installer
+!insertmacro MUI_LANGUAGE "SimpChinese"
+
+LangString APP_DISPLAY_NAME ${LANG_ENGLISH} "Gemsnote"
+LangString APP_DISPLAY_NAME ${LANG_SIMPCHINESE} "珠玑笔记"
 
 ## The following two statements can be used to sign the installer and the uninstaller. The path to the binaries are provided in %1
 #!uninstfinalize 'signtool --file "%1"'
 #!finalize 'signtool --file "%1"'
 
-Name "${INFO_PRODUCTNAME}"
+Name "$(APP_DISPLAY_NAME)"
 OutFile "..\..\bin\${INFO_PROJECTNAME}-${ARCH}-installer.exe" # Name of the installer's file.
-InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\${INFO_PRODUCTNAME}" # Default installing folder ($PROGRAMFILES is Program Files folder).
+InstallDir "$PROGRAMFILES64\${INFO_COMPANYNAME}\$(APP_DISPLAY_NAME)" # Default installing folder ($PROGRAMFILES is Program Files folder).
 ShowInstDetails show # This will always show the installation details.
 
 Function .onInit
@@ -88,13 +95,16 @@ Section
 
     !insertmacro wails.files
 
-    CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
-    CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    CreateShortcut "$SMPROGRAMS\$(APP_DISPLAY_NAME).lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    CreateShortCut "$DESKTOP\$(APP_DISPLAY_NAME).lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
 
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
 
     !insertmacro wails.writeUninstaller
+    ; wails_tools writes the default English display name first; override it
+    ; with the selected installer language.
+    WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "$(APP_DISPLAY_NAME)"
 SectionEnd
 
 Section "uninstall"
@@ -104,11 +114,11 @@ Section "uninstall"
 
     RMDir /r $INSTDIR
 
-    Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
-    Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
+    Delete "$SMPROGRAMS\$(APP_DISPLAY_NAME).lnk"
+    Delete "$DESKTOP\$(APP_DISPLAY_NAME).lnk"
 
     !insertmacro wails.unassociateFiles
     !insertmacro wails.unassociateCustomProtocols
 
-    !insertmacro wails.deleteUninstaller
+!insertmacro wails.deleteUninstaller
 SectionEnd

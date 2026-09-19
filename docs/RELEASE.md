@@ -117,6 +117,8 @@ scripts/build-release.sh <version> [linux|darwin] [amd64|arm64] [absolute-output
 
 Linux 会同时生成带 `.desktop` 和图标的 ZIP 以及 AppImage；macOS 会将 `.app` 制作为 DMG；Windows 会使用 Wails 的 NSIS 模板生成安装器 EXE。Windows 不生成 MSI。
 
+安装后的显示名称按系统语言选择：中文系统显示“珠玑笔记”，其它语言显示 “Gemsnote”。Linux `.desktop`、macOS `InfoPlist.strings` 和 Windows NSIS 安装器均包含相应的本地化名称；可执行文件名仍为 `gemsnote`。
+
 macOS 发布给其他用户前还应完成应用签名和 Apple notarization；Windows 正式分发可进一步增加 Authenticode 签名或 NSIS 安装包。这些签名材料不应写入仓库。
 
 GitHub tag 发布使用 `.github/workflows/release.yml` 自动执行同样的五平台构建。正式 tag 必须为 `vMAJOR.MINOR.PATCH`，且主仓库和 Desktop 仓库应存在同名 tag，以固定共享前端版本。

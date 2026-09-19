@@ -79,6 +79,8 @@ Windows PowerShell 使用：
 
 脚本会检查版本、依赖、前端资源和测试，然后生成对应平台安装包。完整的平台、图标、AppImage runtime、NSIS 和 GitHub Actions 说明见 [Release 构建说明](RELEASE.md)。
 
+安装包的显示名称按系统语言本地化：中文系统显示“珠玑笔记”，其它语言显示 “Gemsnote”；可执行文件名、数据目录名和内部包标识始终保持 `gemsnote`，避免升级和数据迁移受到影响。
+
 ## 提交前检查
 
 提交前至少确认：
