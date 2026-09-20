@@ -11,17 +11,24 @@ import (
 )
 
 type Client struct {
-	client  *resty.Client
-	baseURL string
-	token   string
-	version string
-	macAddr string
+	client       *resty.Client
+	uploadClient *resty.Client
+	baseURL      string
+	token        string
+	version      string
+	macAddr      string
 }
+
+const (
+	defaultRequestTimeout = 60 * time.Second
+	noteUploadTimeout     = 10 * time.Minute
+)
 
 func NewClient() *Client {
 	return &Client{
-		client:  resty.New().SetTimeout(60 * time.Second),
-		version: "linux_amd64_2.0",
+		client:       resty.New().SetTimeout(defaultRequestTimeout),
+		uploadClient: resty.New().SetTimeout(noteUploadTimeout),
+		version:      "linux_amd64_2.0",
 	}
 }
 
@@ -32,6 +39,7 @@ func (c *Client) SetToken(token string) {
 func (c *Client) SetHost(host string) {
 	c.baseURL = host
 	c.client.SetBaseURL(host + "/api2")
+	c.uploadClient.SetBaseURL(host + "/api2")
 }
 
 func (c *Client) SetMacAddr(addr string) {
@@ -59,6 +67,17 @@ func (c *Client) commonParams() map[string]string {
 	return params
 }
 
+func (c *Client) redactError(err error) error {
+	if err == nil {
+		return nil
+	}
+	message := err.Error()
+	if c.token != "" {
+		message = strings.ReplaceAll(message, c.token, "[redacted]")
+	}
+	return fmt.Errorf("%s", message)
+}
+
 func (c *Client) get(path string, params map[string]string) (*resty.Response, error) {
 	allParams := c.commonParams()
 	for k, v := range params {
@@ -67,6 +86,7 @@ func (c *Client) get(path string, params map[string]string) (*resty.Response, er
 
 	resp, err := c.client.R().SetQueryParams(allParams).Get(path)
 	if err != nil {
+		err = c.redactError(err)
 		logrus.Errorf("API GET %s error: %v", path, err)
 		return nil, err
 	}
@@ -79,17 +99,39 @@ func (c *Client) get(path string, params map[string]string) (*resty.Response, er
 }
 
 func (c *Client) post(path string, data interface{}, params map[string]string) (*resty.Response, error) {
+	return c.postWithClient(c.client, path, data, params)
+}
+
+// postNoteUpload uses a separate, longer timeout for note writes. New notes
+// can contain the full body plus base64-encoded local images and attachments;
+// the server also persists and converts those files before sending headers.
+// Do not retry these non-idempotent requests automatically: the server may
+// have committed the note even when the response was lost.
+func (c *Client) postNoteUpload(path string, data interface{}, params map[string]string) (*resty.Response, error) {
+	return c.postWithClient(c.uploadClient, path, data, params)
+}
+
+func (c *Client) postWithClient(client *resty.Client, path string, data interface{}, params map[string]string) (*resty.Response, error) {
 	allParams := c.commonParams()
 	for k, v := range params {
 		allParams[k] = v
 	}
 
-	req := c.client.R().SetQueryParams(allParams)
+	req := client.R().SetQueryParams(allParams)
 	if data != nil {
-		req.SetFormData(flattenFormData(data))
+		form := flattenFormData(data)
+		if path == "note/addNote" || path == "note/updateNote" {
+			var payloadBytes int
+			for key, value := range form {
+				payloadBytes += len(key) + len(value)
+			}
+			logrus.Debugf("API POST %s form payload: approximately %d bytes", path, payloadBytes)
+		}
+		req.SetFormData(form)
 	}
 	resp, err := req.Post(path)
 	if err != nil {
+		err = c.redactError(err)
 		logrus.Errorf("API POST %s error: %v", path, err)
 		return nil, err
 	}
@@ -174,6 +216,7 @@ func (c *Client) postFiles(path string, formData map[string]string, files map[st
 
 	resp, err := req.Post(path)
 	if err != nil {
+		err = c.redactError(err)
 		logrus.Errorf("API POST files %s error: %v", path, err)
 		return nil, err
 	}

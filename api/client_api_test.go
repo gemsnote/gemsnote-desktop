@@ -2,8 +2,29 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 )
+
+func TestNoteUploadsUseDedicatedLongTimeout(t *testing.T) {
+	client := NewClient()
+	if got := client.client.GetClient().Timeout; got != defaultRequestTimeout {
+		t.Fatalf("default timeout = %v, want %v", got, defaultRequestTimeout)
+	}
+	if got := client.uploadClient.GetClient().Timeout; got != noteUploadTimeout {
+		t.Fatalf("note upload timeout = %v, want %v", got, noteUploadTimeout)
+	}
+}
+
+func TestClientErrorsRedactToken(t *testing.T) {
+	client := NewClient()
+	client.SetToken("secret-token")
+	err := client.redactError(errors.New(`Post "https://example.test/api2/note/addNote?token=secret-token": timeout`))
+	if strings.Contains(err.Error(), "secret-token") || !strings.Contains(err.Error(), "[redacted]") {
+		t.Fatalf("token was not redacted: %v", err)
+	}
+}
 
 func TestLastSyncStateTimeAcceptsStringAndNumber(t *testing.T) {
 	for _, tc := range []struct {

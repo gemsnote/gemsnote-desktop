@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/menu"
-	"github.com/wailsapp/wails/v2/pkg/menu/keys"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/linux"
@@ -102,7 +100,7 @@ func main() {
 			wailsruntime.EventsEmit(app.ctx, "shared-notes-revoked", noteIDs)
 		}
 	}
-	appMenu := buildMenu(app)
+	appMenu := buildMenu(app, app.MenuLanguage())
 
 	dist, err := fs.Sub(assets, "frontend/dist")
 	if err != nil {
@@ -138,7 +136,7 @@ func main() {
 			if !pending {
 				return nil
 			}
-			_, syncErr := app.sync.FullSync()
+			syncErr := app.runFullSync(false)
 			// "Pending" only means local changes that still need uploading. A
 			// later pull/avatar/attachment failure must not prevent logout once
 			// every local dirty row has already been accepted by the server.
@@ -211,36 +209,6 @@ func main() {
 	if err != nil {
 		println("Error:", err.Error())
 	}
-}
-
-func buildMenu(app *App) *menu.Menu {
-	appMenu := menu.NewMenu()
-
-	fileMenu := appMenu.AddSubmenu("File")
-	fileMenu.AddText("New Note", keys.CmdOrCtrl("n"), func(_ *menu.CallbackData) {})
-	fileMenu.AddText("New Notebook", keys.CmdOrCtrl("shift+n"), func(_ *menu.CallbackData) {})
-	fileMenu.AddSeparator()
-	fileMenu.AddText("Export PDF", keys.CmdOrCtrl("shift+e"), func(_ *menu.CallbackData) {})
-	fileMenu.AddSeparator()
-	fileMenu.AddText("Quit", keys.CmdOrCtrl("q"), func(_ *menu.CallbackData) {
-		os.Exit(0)
-	})
-
-	viewMenu := appMenu.AddSubmenu("View")
-	viewMenu.AddText("Toggle Full Screen", keys.Key("F11"), func(_ *menu.CallbackData) {})
-
-	syncMenu := appMenu.AddSubmenu("Sync")
-	syncMenu.AddText("Sync Now", keys.CmdOrCtrl("s"), func(_ *menu.CallbackData) {
-		go app.IncrSync()
-	})
-	syncMenu.AddText("Full Sync", keys.CmdOrCtrl("shift+s"), func(_ *menu.CallbackData) {
-		go app.FullSyncForce()
-	})
-
-	helpMenu := appMenu.AddSubmenu("Help")
-	helpMenu.AddText("About", nil, func(_ *menu.CallbackData) {})
-
-	return appMenu
 }
 
 func (a *App) startAutoSync() {

@@ -75,8 +75,12 @@ func (s *SyncService) FullSync() (*models.SyncInfo, error) {
 	s.api.SetHost(user.Host)
 	s.api.SetToken(user.Token)
 
-	lastUsn, _, _, _, err := s.db.GetAllLastSyncState(user.ID)
-	if err != nil {
+	// Always protect local work first. Pulling a remote snapshot can update or
+	// reconcile the same rows, so every dirty row that already existed when the
+	// sync started must be accepted by the server before any download begins.
+	s.emitProgress("push", 0, 100)
+	if err := s.sendChanges(syncInfo); err != nil {
+		logrus.Errorf("Send changes error: %v", err)
 		return nil, err
 	}
 
@@ -85,33 +89,34 @@ func (s *SyncService) FullSync() (*models.SyncInfo, error) {
 		return nil, err
 	}
 
-	logrus.Debugf("Server LastSyncUsn: %d, Local: %d", serverState.LastSyncUsn, lastUsn)
-
-	s.emitProgress("notebooks", 0, 100)
+	s.emitProgress("notebooks", 20, 100)
 	if err := s.syncNotebooks(-1, syncInfo); err != nil {
 		logrus.Errorf("Sync notebooks error: %v", err)
 		return nil, err
 	}
 
-	s.emitProgress("notes", 20, 100)
+	s.emitProgress("notes", 40, 100)
 	if err := s.syncNotes(-1, syncInfo); err != nil {
 		logrus.Errorf("Sync notes error: %v", err)
 		return nil, err
 	}
 
-	s.emitProgress("tags", 40, 100)
+	s.emitProgress("tags", 60, 100)
 	if err := s.syncTags(-1, syncInfo); err != nil {
 		logrus.Errorf("Sync tags error: %v", err)
 		return nil, err
 	}
 
-	s.emitProgress("push", 60, 100)
+	// A complete snapshot can discover clean cache rows that no longer exist
+	// on the server and requeue them as new local data. Upload only those newly
+	// generated dirty rows after the download/merge pass.
+	s.emitProgress("push", 75, 100)
 	if err := s.sendChanges(syncInfo); err != nil {
 		logrus.Errorf("Send changes error: %v", err)
 		return nil, err
 	}
 
-	s.emitProgress("images", 80, 100)
+	s.emitProgress("images", 85, 100)
 	if err := s.syncImagesAndAttachs(syncInfo); err != nil {
 		logrus.Errorf("Sync images/attachs error: %v", err)
 		return nil, err
@@ -167,6 +172,13 @@ func (s *SyncService) IncrSync() (*models.SyncInfo, error) {
 		return nil, err
 	}
 
+	// Upload the dirty set captured at the start before applying any remote
+	// changes to the local cache.
+	if err := s.sendChanges(syncInfo); err != nil {
+		logrus.Errorf("Send changes error: %v", err)
+		return nil, err
+	}
+
 	serverState, err := s.api.GetLastSyncState()
 	if err != nil {
 		return nil, err
@@ -204,6 +216,9 @@ func (s *SyncService) IncrSync() (*models.SyncInfo, error) {
 		}
 	}
 
+	// Pull/merge can create conflict copies or requeue cache rows. Give those
+	// newly-created local changes a second upload pass without changing the
+	// guarantee that the original dirty set was uploaded before downloading.
 	if err := s.sendChanges(syncInfo); err != nil {
 		logrus.Errorf("Send changes error: %v", err)
 		return nil, err
@@ -212,18 +227,6 @@ func (s *SyncService) IncrSync() (*models.SyncInfo, error) {
 	if err := s.syncImagesAndAttachs(syncInfo); err != nil {
 		logrus.Errorf("Sync images/attachs error: %v", err)
 		return nil, err
-	}
-
-	s.mu.Lock()
-	needRetry := s.needSyncAgain && s.retryCount < 5
-	s.mu.Unlock()
-
-	if needRetry {
-		s.mu.Lock()
-		s.retryCount++
-		s.mu.Unlock()
-		logrus.Info("Need to sync again...")
-		return s.IncrSync()
 	}
 
 	logrus.Info("Incremental sync completed")

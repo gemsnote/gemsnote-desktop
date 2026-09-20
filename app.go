@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	stdsync "sync"
 	"time"
 
 	"github.com/signintech/gopdf"
@@ -27,6 +28,7 @@ type App struct {
 	db          *db.Database
 	api         *api.Client
 	sync        *sync.SyncService
+	syncRunMu   stdsync.Mutex
 	sharedSync  *sharedsync.Service
 	files       *service.FileService
 	webCallback WebCallbackFunc
@@ -124,7 +126,7 @@ func (a *App) Login(email, password, host string) map[string]interface{} {
 	a.files.InitUserDirs(user.ID)
 	// A successful remote login always starts from a full server snapshot.
 	// Keep the local cache for offline use, but never trust its old cursors.
-	if err := a.sync.ForceFullSync(); err != nil {
+	if err := a.runFullSync(true); err != nil {
 		return map[string]interface{}{"Ok": false, "Msg": err.Error()}
 	}
 	serverVersion, versionErr := a.api.GetServerVersion()
@@ -165,7 +167,7 @@ func (a *App) GetCurrentUser() map[string]interface{} {
 
 func (a *App) Logout() map[string]interface{} {
 	if user, _ := a.db.GetActiveUser(); user != nil && !user.IsLocal && user.Host != "" && user.Token != "" {
-		if _, err := a.sync.FullSync(); err != nil {
+		if err := a.runFullSync(false); err != nil {
 			return map[string]interface{}{"Ok": false, "Msg": "syncFailed"}
 		}
 	}
@@ -262,7 +264,7 @@ func (a *App) GetLastSyncState() map[string]interface{} {
 }
 
 func (a *App) FullSyncForce() map[string]interface{} {
-	err := a.sync.ForceFullSync()
+	err := a.runFullSync(true)
 	result := map[string]interface{}{"Ok": true}
 	if err != nil {
 		result = map[string]interface{}{"Ok": false, "Msg": err.Error()}
@@ -777,7 +779,7 @@ func (a *App) DeleteNoteHistory(noteID string) {
 // ==================== Sync Operations ====================
 
 func (a *App) FullSync() map[string]interface{} {
-	info, err := a.sync.FullSync()
+	info, err := a.runFullSyncInfo()
 	if err != nil {
 		return map[string]interface{}{"Ok": false, "Msg": err.Error()}
 	}
@@ -801,6 +803,8 @@ func (a *App) FullSync() map[string]interface{} {
 }
 
 func (a *App) IncrSync() map[string]interface{} {
+	a.syncRunMu.Lock()
+	defer a.syncRunMu.Unlock()
 	info, err := a.sync.IncrSync()
 	if err != nil {
 		result := map[string]interface{}{"Ok": false, "Msg": err.Error()}
@@ -829,6 +833,22 @@ func (a *App) IncrSync() map[string]interface{} {
 	}
 	a.emitSyncFinished(result)
 	return result
+}
+
+func (a *App) runFullSync(force bool) error {
+	a.syncRunMu.Lock()
+	defer a.syncRunMu.Unlock()
+	if force {
+		return a.sync.ForceFullSync()
+	}
+	_, err := a.sync.FullSync()
+	return err
+}
+
+func (a *App) runFullSyncInfo() (*models.SyncInfo, error) {
+	a.syncRunMu.Lock()
+	defer a.syncRunMu.Unlock()
+	return a.sync.FullSync()
 }
 
 func (a *App) IsSyncing() bool {

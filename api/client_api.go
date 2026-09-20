@@ -477,7 +477,7 @@ func (c *Client) AddNote(note *models.Note) (*models.Note, error) {
 		"FileDatas":  note.FileDatas,
 	}
 
-	resp, err := c.post("note/addNote", data, nil)
+	resp, err := c.postNoteUpload("note/addNote", data, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -506,7 +506,7 @@ func (c *Client) UpdateNote(note *models.Note) (*models.Note, error) {
 		}
 	}
 
-	resp, err := c.post("note/updateNote", data, nil)
+	resp, err := c.postNoteUpload("note/updateNote", data, nil)
 	if err != nil {
 		return nil, err
 	}

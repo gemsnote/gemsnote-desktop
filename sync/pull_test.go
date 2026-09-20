@@ -12,6 +12,47 @@ import (
 	"github.com/gemsnote/gemsnote/models"
 )
 
+func TestIncrementalSyncUploadsDirtyDataBeforePulling(t *testing.T) {
+	var order []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api2/client/notebook/add":
+			order = append(order, "push")
+			w.Write([]byte(`{"NotebookId":"remote-book","Title":"Local","Usn":1}`))
+		case "/api2/user/getSyncState":
+			w.Write([]byte(`{"LastSyncUsn":1,"LastSyncTime":0}`))
+		case "/api2/notebook/getSyncNotebooks":
+			order = append(order, "pull")
+			w.Write([]byte(`[]`))
+		case "/api2/note/getSyncNotes", "/api2/tag/getSyncTags":
+			w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	database, err := db.NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.InsertUser(&models.User{ID: "user1", Username: "tester", Host: server.URL, Token: "token", IsActive: true}); err != nil {
+		t.Fatal(err)
+	}
+	database.SetCurrentUser("user1")
+	if err := database.InsertNotebook(&models.Notebook{ID: "book", NotebookID: "local-book", UserID: "user1", Title: "Local", IsDirty: true, LocalIsNew: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := NewSyncService(database, api.NewClient()).IncrSync(); err != nil {
+		t.Fatal(err)
+	}
+	if len(order) < 2 || order[0] != "push" || order[1] != "pull" {
+		t.Fatalf("sync order = %v, want push before pull", order)
+	}
+}
+
 func TestFullSyncRepushesMissingDesktopNote(t *testing.T) {
 	addCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
