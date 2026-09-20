@@ -105,6 +105,9 @@ func (s *SyncService) sendNotebookChanges(userID string, syncInfo *models.SyncIn
 			continue
 		} else {
 			serverNb, apiErr = s.api.UpdateNotebook(s.prepareNotebookForUpload(nb))
+			if apiErr != nil && isMissingRemoteNotebook(apiErr) {
+				serverNb, apiErr = s.api.AddNotebook(s.prepareNotebookForUpload(nb))
+			}
 		}
 
 		if apiErr != nil {
@@ -246,6 +249,14 @@ func isMissingRemoteNote(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "noteidnotexists") || strings.Contains(msg, "notexists")
+}
+
+func isMissingRemoteNotebook(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "notebookidnotexists") || strings.Contains(msg, "notexists")
 }
 
 func (s *SyncService) recreateMissingNote(note *models.Note) (*models.Note, string, error) {

@@ -56,8 +56,8 @@ func (d *Database) GetNotebooks(userID string) ([]*models.Notebook, error) {
 }
 
 // ReconcileFullNotebooks queues every locally cached notebook absent from the
-// complete server snapshot for upload. A previously hidden clean row is also
-// restored: full sync merges the two sides for the same account.
+// complete server snapshot for verification while retaining its known server
+// ID. Snapshot absence alone is not sufficient evidence to discard identity.
 func (d *Database) ReconcileFullNotebooks(userID string, remoteIDs map[string]bool) error {
 	rows, err := d.db.Query(`SELECT notebook_id, server_notebook_id, is_dirty, local_is_new, local_is_delete FROM notebooks WHERE user_id = ?`, userID)
 	if err != nil {
@@ -90,13 +90,24 @@ func (d *Database) ReconcileFullNotebooks(userID string, remoteIDs map[string]bo
 				_, err = d.db.Exec(`UPDATE notebooks SET local_is_delete = 0 WHERE user_id = ? AND notebook_id = ?`, userID, e.localID)
 			}
 		} else {
-			_, err = d.db.Exec(`UPDATE notebooks SET server_notebook_id = '', is_dirty = 1, local_is_new = 1, local_is_delete = 0 WHERE user_id = ? AND notebook_id = ?`, userID, e.localID)
+			_, err = d.db.Exec(`UPDATE notebooks SET is_dirty = 1, local_is_new = 0, local_is_delete = 0 WHERE user_id = ? AND notebook_id = ?`, userID, e.localID)
 		}
 		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// RestoreLostServerNotebookMappings repairs mappings cleared by older
+// full-sync reconciliation without changing genuinely new local notebooks.
+func (d *Database) RestoreLostServerNotebookMappings(userID string) error {
+	_, err := d.db.Exec(`
+		UPDATE notebooks
+		SET server_notebook_id = notebook_id, local_is_new = 0
+		WHERE user_id = ? AND server_notebook_id = '' AND local_is_new = 1 AND usn > 0
+	`, userID)
+	return err
 }
 
 // RestoreNotebookParents translates remote parent IDs after all pages of a

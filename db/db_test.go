@@ -370,8 +370,41 @@ func TestRequeueMissingDesktopNotes(t *testing.T) {
 	a, _ := database.GetNote("local-a")
 	b, _ := database.GetNote("local-b")
 	c, _ := database.GetNote("server-c")
-	if !a.IsDirty || !a.LocalIsNew || a.ServerNoteID != "" || b.IsDirty || !c.IsDirty || !c.LocalIsNew || c.ServerNoteID != "" {
+	if !a.IsDirty || a.LocalIsNew || a.ServerNoteID != "missing-a" || b.IsDirty || !c.IsDirty || c.LocalIsNew || c.ServerNoteID != "server-c" {
 		t.Fatalf("requeue mismatch: a=%+v b=%+v c=%+v", a, b, c)
+	}
+}
+
+func TestRestoreLostServerNoteMappings(t *testing.T) {
+	database, err := NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.InsertUser(&models.User{ID: "user1", Username: "tester"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.InsertNotebook(&models.Notebook{ID: "nb", NotebookID: "book", UserID: "user1"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, note := range []*models.Note{
+		{ID: "old", NoteID: "server-note", NotebookID: "book", UserID: "user1", IsDirty: true, LocalIsNew: true, Usn: 42},
+		{ID: "new", NoteID: "local-note", NotebookID: "book", UserID: "user1", IsDirty: true, LocalIsNew: true},
+	} {
+		if err := database.InsertNote(note); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := database.RestoreLostServerNoteMappings("user1"); err != nil {
+		t.Fatal(err)
+	}
+	oldNote, _ := database.GetNote("server-note")
+	newNote, _ := database.GetNote("local-note")
+	if oldNote.ServerNoteID != "server-note" || oldNote.LocalIsNew || !oldNote.IsDirty {
+		t.Fatalf("server-derived mapping was not restored: %+v", oldNote)
+	}
+	if newNote.ServerNoteID != "" || !newNote.LocalIsNew || !newNote.IsDirty {
+		t.Fatalf("genuinely local note was modified: %+v", newNote)
 	}
 }
 
@@ -397,7 +430,7 @@ func TestReconcileFullNotebooksRequeuesDirtyAndHiddenRows(t *testing.T) {
 	}
 	for _, id := range []string{"dirty-book", "hidden-book"} {
 		nb, err := database.GetNotebook(id)
-		if err != nil || nb == nil || nb.ServerNotebookID != "" || !nb.IsDirty || !nb.LocalIsNew || nb.LocalIsDelete {
+		if err != nil || nb == nil || nb.ServerNotebookID == "" || !nb.IsDirty || nb.LocalIsNew || nb.LocalIsDelete {
 			t.Fatalf("notebook %s not queued for merge: %+v %v", id, nb, err)
 		}
 	}

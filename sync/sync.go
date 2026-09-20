@@ -74,6 +74,9 @@ func (s *SyncService) FullSync() (*models.SyncInfo, error) {
 	s.db.SetCurrentUser(user.ID)
 	s.api.SetHost(user.Host)
 	s.api.SetToken(user.Token)
+	if err := s.restoreLostServerMappings(user.ID); err != nil {
+		return nil, err
+	}
 
 	// Always protect local work first. Pulling a remote snapshot can update or
 	// reconcile the same rows, so every dirty row that already existed when the
@@ -166,6 +169,9 @@ func (s *SyncService) IncrSync() (*models.SyncInfo, error) {
 	s.db.SetCurrentUser(user.ID)
 	s.api.SetHost(user.Host)
 	s.api.SetToken(user.Token)
+	if err := s.restoreLostServerMappings(user.ID); err != nil {
+		return nil, err
+	}
 
 	lastUsn, _, _, _, err := s.db.GetAllLastSyncState(user.ID)
 	if err != nil {
@@ -231,6 +237,13 @@ func (s *SyncService) IncrSync() (*models.SyncInfo, error) {
 
 	logrus.Info("Incremental sync completed")
 	return syncInfo, nil
+}
+
+func (s *SyncService) restoreLostServerMappings(userID string) error {
+	if err := s.db.RestoreLostServerNotebookMappings(userID); err != nil {
+		return err
+	}
+	return s.db.RestoreLostServerNoteMappings(userID)
 }
 
 func (s *SyncService) ForceFullSync() error {

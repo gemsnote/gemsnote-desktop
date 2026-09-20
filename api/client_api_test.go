@@ -3,8 +3,13 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/gemsnote/gemsnote/models"
 )
 
 func TestNoteUploadsUseDedicatedLongTimeout(t *testing.T) {
@@ -23,6 +28,37 @@ func TestClientErrorsRedactToken(t *testing.T) {
 	err := client.redactError(errors.New(`Post "https://example.test/api2/note/addNote?token=secret-token": timeout`))
 	if strings.Contains(err.Error(), "secret-token") || !strings.Contains(err.Error(), "[redacted]") {
 		t.Fatalf("token was not redacted: %v", err)
+	}
+}
+
+func TestAddNoteSendsStableIDAndOriginalTimes(t *testing.T) {
+	created := time.Date(2020, 2, 3, 4, 5, 6, 0, time.UTC)
+	updated := created.Add(2 * time.Hour)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		for key, want := range map[string]string{
+			"ClientNoteId": "507f1f77bcf86cd799439011",
+			"CreatedTime":  created.Format(time.RFC3339Nano),
+			"UpdatedTime":  updated.Format(time.RFC3339Nano),
+		} {
+			if got := r.Form.Get(key); got != want {
+				t.Errorf("%s = %q, want %q", key, got, want)
+			}
+		}
+		w.Write([]byte(`{"NoteId":"507f1f77bcf86cd799439011","NotebookId":"507f191e810c19729de860ea","Usn":1}`))
+	}))
+	defer server.Close()
+
+	client := NewClient()
+	client.SetHost(server.URL)
+	_, err := client.AddNote(&models.Note{
+		NoteID: "507f1f77bcf86cd799439011", NotebookID: "507f191e810c19729de860ea",
+		Title: "original", CreatedTime: &created, UpdatedTime: &updated,
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gemsnote/gemsnote/models"
 	"github.com/gemsnote/gemsnote/utils"
@@ -466,15 +467,22 @@ func (c *Client) DeleteNotebook(nb *models.Notebook) (*APIResponse, error) {
 
 func (c *Client) AddNote(note *models.Note) (*models.Note, error) {
 	data := map[string]interface{}{
-		"Title":      note.Title,
-		"NotebookId": note.NotebookID,
-		"Content":    note.Content,
-		"IsMarkdown": note.IsMarkdown,
-		"Tags":       note.Tags,
-		"IsBlog":     note.IsBlog,
-		"IsStar":     note.IsStar,
-		"Files":      note.Files,
-		"FileDatas":  note.FileDatas,
+		"ClientNoteId": note.NoteID,
+		"Title":        note.Title,
+		"NotebookId":   note.NotebookID,
+		"Content":      note.Content,
+		"IsMarkdown":   note.IsMarkdown,
+		"Tags":         note.Tags,
+		"IsBlog":       note.IsBlog,
+		"IsStar":       note.IsStar,
+		"Files":        note.Files,
+		"FileDatas":    note.FileDatas,
+	}
+	if note.CreatedTime != nil {
+		data["CreatedTime"] = note.CreatedTime.Format(time.RFC3339Nano)
+	}
+	if note.UpdatedTime != nil {
+		data["UpdatedTime"] = note.UpdatedTime.Format(time.RFC3339Nano)
 	}
 
 	resp, err := c.postNoteUpload("note/addNote", data, nil)
@@ -497,6 +505,12 @@ func (c *Client) UpdateNote(note *models.Note) (*models.Note, error) {
 		"Tags":       note.Tags,
 		"Files":      note.Files,
 		"FileDatas":  note.FileDatas,
+	}
+	if note.CreatedTime != nil {
+		data["CreatedTime"] = note.CreatedTime.Format(time.RFC3339Nano)
+	}
+	if note.UpdatedTime != nil {
+		data["UpdatedTime"] = note.UpdatedTime.Format(time.RFC3339Nano)
 	}
 
 	if note.ContentIsDirty {

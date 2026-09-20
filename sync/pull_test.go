@@ -63,6 +63,8 @@ func TestFullSyncRepushesMissingDesktopNote(t *testing.T) {
 			json.NewEncoder(w).Encode([]map[string]any{{"NotebookId": "remote-book", "UserId": "user1", "Title": "Book", "Usn": 1}})
 		case "/api2/note/getSyncNotes", "/api2/tag/getSyncTags":
 			w.Write([]byte(`[]`))
+		case "/api2/note/updateNote":
+			w.Write([]byte(`{"Ok":false,"Msg":"noteIdNotExists"}`))
 		case "/api2/note/addNote":
 			addCalls++
 			if err := r.ParseForm(); err != nil || r.Form.Get("NotebookId") != "remote-book" {
@@ -163,6 +165,10 @@ func TestFullSyncMergesChangedServerDatabase(t *testing.T) {
 			w.Write([]byte(`{"Content":"remote body"}`))
 		case "/api2/tag/getSyncTags":
 			w.Write([]byte(`[]`))
+		case "/api2/client/notebook/update":
+			w.Write([]byte(`{"Ok":false,"Msg":"notebookIdNotExists"}`))
+		case "/api2/note/updateNote":
+			w.Write([]byte(`{"Ok":false,"Msg":"noteIdNotExists"}`))
 		case "/api2/client/notebook/add":
 			addedNotebook++
 			w.Write([]byte(`{"NotebookId":"new-book","Title":"Offline","Usn":4}`))
@@ -222,6 +228,10 @@ func TestIncrementalSyncDetectsServerRollback(t *testing.T) {
 			w.Write([]byte(`{"LastSyncUsn":3,"LastSyncTime":0}`))
 		case "/api2/notebook/getSyncNotebooks", "/api2/note/getSyncNotes", "/api2/tag/getSyncTags":
 			w.Write([]byte(`[]`))
+		case "/api2/client/notebook/update":
+			w.Write([]byte(`{"Ok":false,"Msg":"notebookIdNotExists"}`))
+		case "/api2/note/updateNote":
+			w.Write([]byte(`{"Ok":false,"Msg":"noteIdNotExists"}`))
 		case "/api2/client/notebook/add":
 			w.Write([]byte(`{"NotebookId":"new-book","Usn":4}`))
 		case "/api2/note/addNote":
@@ -266,6 +276,8 @@ func TestFullSyncUploadsMissingNotebookTreeParentFirst(t *testing.T) {
 			w.Write([]byte(`{"LastSyncUsn":1,"LastSyncTime":0}`))
 		case "/api2/notebook/getSyncNotebooks", "/api2/note/getSyncNotes", "/api2/tag/getSyncTags":
 			w.Write([]byte(`[]`))
+		case "/api2/client/notebook/update":
+			w.Write([]byte(`{"Ok":false,"Msg":"notebookIdNotExists"}`))
 		case "/api2/client/notebook/add":
 			_ = r.ParseForm()
 			order = append(order, r.Form.Get("title"))

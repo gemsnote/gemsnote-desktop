@@ -256,9 +256,11 @@ func (d *Database) GetDirtyNotes(userID string) ([]*models.Note, error) {
 	return d.scanNotes(rows)
 }
 
-// RequeueMissingDesktopNotes merges clean local notes absent from the current
-// server snapshot, regardless of which server database originally created
-// them. Only non-trashed notes are revived; locally deleted rows stay deleted.
+// RequeueMissingDesktopNotes queues clean local notes absent from the current
+// server snapshot for verification by updateNote. It deliberately preserves
+// the known server ID: a partial/interrupted snapshot is not proof that the
+// remote object was deleted. The push path only creates a replacement after
+// the server explicitly reports that the ID does not exist.
 func (d *Database) RequeueMissingDesktopNotes(userID string, remoteIDs map[string]bool) error {
 	rows, err := d.db.Query(`
 		SELECT note_id, server_note_id FROM notes
@@ -291,7 +293,7 @@ func (d *Database) RequeueMissingDesktopNotes(userID string, remoteIDs map[strin
 		}
 	}
 	for _, localID := range missing {
-		if _, err := d.db.Exec(`UPDATE notes SET server_note_id = '', is_dirty = 1, local_is_new = 1, local_is_delete = 0 WHERE note_id = ? AND user_id = ?`, localID, userID); err != nil {
+		if _, err := d.db.Exec(`UPDATE notes SET is_dirty = 1, local_is_new = 0, local_is_delete = 0 WHERE note_id = ? AND user_id = ?`, localID, userID); err != nil {
 			return err
 		}
 	}
@@ -301,6 +303,19 @@ func (d *Database) RequeueMissingDesktopNotes(userID string, remoteIDs map[strin
 		}
 	}
 	return nil
+}
+
+// RestoreLostServerNoteMappings repairs mappings cleared by older full-sync
+// reconciliation. A positive USN proves the row has previously existed on a
+// server; genuinely new local notes have USN zero and are intentionally left
+// untouched.
+func (d *Database) RestoreLostServerNoteMappings(userID string) error {
+	_, err := d.db.Exec(`
+		UPDATE notes
+		SET server_note_id = note_id, local_is_new = 0
+		WHERE user_id = ? AND server_note_id = '' AND local_is_new = 1 AND usn > 0
+	`, userID)
+	return err
 }
 
 func (d *Database) UpdateNote(note *models.Note) error {
