@@ -49,6 +49,7 @@ func NewApp(database *db.Database) *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.sync = sync.NewSyncService(a.db, a.api)
+	a.SetSyncProgressCallback()
 	a.restoreSession()
 	a.startAutoSync()
 }
@@ -1118,6 +1119,13 @@ func (a *App) StopSync() {
 
 func (a *App) SetSyncProgressCallback() {
 	a.sync.SetProgressCallback(func(stage string, current, total int) {
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "sync-progress", map[string]interface{}{
+				"Stage":   stage,
+				"Current": current,
+				"Total":   total,
+			})
+		}
 		if a.webCallback != nil {
 			a.webCallback("syncProgress", map[string]interface{}{
 				"Stage":   stage,

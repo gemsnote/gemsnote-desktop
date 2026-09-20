@@ -200,6 +200,10 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) bool {
 			h.Proxy.SetHost(host)
 		}
 		h.doLogin(w, r)
+	case path == "/api2/auth/register":
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]any{"Ok": false, "Msg": "registrationDisabled"})
 	case path == "/api2/logout" && method == http.MethodGet:
 		h.logout(w, r)
 	default:

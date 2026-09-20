@@ -110,6 +110,14 @@ func TestGuestBootstrapAndNotLogin(t *testing.T) {
 	}
 }
 
+func TestDesktopRegistrationIsDisabled(t *testing.T) {
+	e := newTestEnv(t)
+	status, body := e.post(t, "/api2/auth/register", url.Values{"email": {"new@example.com"}, "pwd": {"secret"}})
+	if status != http.StatusForbidden || !strings.Contains(string(body), "registrationDisabled") {
+		t.Fatalf("desktop registration must be rejected: status=%d body=%s", status, body)
+	}
+}
+
 func TestSyncEndpoints(t *testing.T) {
 	e := newTestEnv(t)
 
