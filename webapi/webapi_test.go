@@ -695,3 +695,33 @@ func TestLogoutSyncFailureKeepsSession(t *testing.T) {
 		t.Fatalf("desktop logout did not report sync failure: %s", body)
 	}
 }
+
+func TestForcedLogoutKeepsPendingCacheAndClearsSession(t *testing.T) {
+	e := newTestEnv(t)
+	userID := utils.ObjectId()
+	user := &models.User{ID: userID, Username: "old-name", Host: "https://notes.example", Token: "token", IsActive: true}
+	if err := e.db.InsertUser(user); err != nil {
+		t.Fatal(err)
+	}
+	e.db.SetCurrentUser(userID)
+	if err := e.db.InsertNotebook(&models.Notebook{ID: "local-book", NotebookID: "local-book", UserID: userID, Title: "pending", IsDirty: true}); err != nil {
+		t.Fatal(err)
+	}
+	e.handler.OnLogout = func() error { return fmt.Errorf("must not sync") }
+
+	code, body := e.post(t, "/api2/web/logout", url.Values{"force": {"true"}})
+	if code != http.StatusOK || !strings.Contains(string(body), `"Ok":true`) {
+		t.Fatalf("forced logout failed: %d %s", code, body)
+	}
+	if active, _ := e.db.GetActiveUser(); active != nil {
+		t.Fatalf("user still active after forced logout: %+v", active)
+	}
+	pending, err := e.db.HasPendingChanges(userID)
+	if err != nil || !pending {
+		t.Fatalf("pending cache was not retained: pending=%v err=%v", pending, err)
+	}
+	stored, err := e.db.GetUser(userID)
+	if err != nil || stored == nil || stored.Host != user.Host || stored.Username != user.Username {
+		t.Fatalf("cached server identity was not retained: user=%+v err=%v", stored, err)
+	}
+}

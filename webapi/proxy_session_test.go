@@ -309,6 +309,49 @@ func TestProfileAvatarUsesTokenAndCachesImage(t *testing.T) {
 	}
 }
 
+func TestProfileRefreshAcceptsDefaultOrMissingAvatar(t *testing.T) {
+	for _, avatar := range []string{"/images/blog/default_avatar.png", "/missing/avatar.png"} {
+		t.Run(avatar, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api2/auth/login":
+					w.Write([]byte(`{"Ok":true,"Token":"test-token","UserId":"user1"}`))
+				case "/api2/system/version":
+					w.Write([]byte(`{"server":"gemsnote","version":"1.0.0"}`))
+				case "/api2/user/info":
+					w.Write([]byte(`{"UserId":"user1","Username":"tester","Logo":"` + avatar + `"}`))
+				case "/images/blog/default_avatar.png":
+					w.Header().Set("Content-Type", "image/png")
+					w.Write([]byte("image bytes"))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+
+			database, err := db.NewInMemory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			if err := database.InsertUser(&models.User{ID: "user1", Username: "tester", Host: server.URL, IsActive: true}); err != nil {
+				t.Fatal(err)
+			}
+			database.SetCurrentUser("user1")
+			database.SetConfig("host", server.URL)
+			files := service.NewFileService(database)
+			files.SetDataDir(t.TempDir())
+			proxy := NewServerProxy(database, files)
+			if ok, msg := proxy.LoginServer("tester", "secret"); !ok {
+				t.Fatalf("login failed: %s", msg)
+			}
+			if !proxy.RefreshUserProfile() {
+				t.Fatal("valid profile was rejected because its avatar could not be cached")
+			}
+		})
+	}
+}
+
 func newEmptyCookieJar() (http.CookieJar, error) {
 	return cookiejar.New(nil)
 }

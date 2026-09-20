@@ -1192,23 +1192,23 @@ func (h *Handler) verifyLocalPassword(user *models.User, password string) string
 }
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
-	if err := h.performLogout(); err != nil {
+	if err := h.performLogout(h.form(r, "force") == "true"); err != nil {
 		h.fail(w, "syncFailed")
 		return
 	}
 	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
-func (h *Handler) logoutJSON(w http.ResponseWriter) {
-	if err := h.performLogout(); err != nil {
+func (h *Handler) logoutJSON(w http.ResponseWriter, r *http.Request) {
+	if err := h.performLogout(h.form(r, "force") == "true"); err != nil {
 		h.fail(w, "syncFailed")
 		return
 	}
 	h.ok(w)
 }
 
-func (h *Handler) performLogout() error {
-	if h.OnLogout != nil {
+func (h *Handler) performLogout(force bool) error {
+	if !force && h.OnLogout != nil {
 		if err := h.OnLogout(); err != nil {
 			return err
 		}

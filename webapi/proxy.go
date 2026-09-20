@@ -327,9 +327,11 @@ func (p *ServerProxy) fetchServerUser() *models.User {
 	if json.Unmarshal(data, &payload) != nil || payload.UserId == "" {
 		return nil
 	}
-	if !p.cacheAvatar(payload.UserId, payload.Logo) {
-		return nil
-	}
+	// Profile metadata is still valid when the avatar is unavailable.  Avatar
+	// caching is best-effort: making it a prerequisite used to abort every
+	// personal sync for accounts that used a default or temporarily missing
+	// image.
+	p.cacheAvatar(payload.UserId, payload.Logo)
 	return &models.User{
 		ID:       payload.UserId,
 		Username: payload.Username,
@@ -369,10 +371,11 @@ func (p *ServerProxy) cacheAvatar(userID, logo string) bool {
 		p.DB.SetConfig("logo:"+userID, logo)
 		return true
 	}
-	if !strings.HasPrefix(path, "public/upload/") {
+	cleanPath := strings.TrimPrefix(filepath.Clean("/"+path), "/")
+	if cleanPath == "." || cleanPath == "" || strings.HasPrefix(cleanPath, "../") {
 		return false
 	}
-	resp, err := p.client.Get(p.host() + "/" + path)
+	resp, err := p.client.Get(p.host() + "/" + cleanPath)
 	if err != nil {
 		return false
 	}

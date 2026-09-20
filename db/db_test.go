@@ -497,6 +497,14 @@ func TestHasPendingChanges(t *testing.T) {
 	if err := database.InsertUser(&models.User{ID: "user1", Username: "tester"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := database.InsertNotebook(&models.Notebook{ID: "remote-book", NotebookID: "remote-book", UserID: "user1", Title: "remote"}); err != nil {
+		t.Fatal(err)
+	}
+	// A server note whose body has not been downloaded is a pull/cache state,
+	// not a local change waiting to be uploaded.
+	if err := database.InsertNote(&models.Note{ID: "remote-note", NoteID: "remote-note", NotebookID: "remote-book", UserID: "user1", Title: "remote", InitSync: true}); err != nil {
+		t.Fatal(err)
+	}
 
 	pending, err := database.HasPendingChanges("user1")
 	if err != nil || pending {

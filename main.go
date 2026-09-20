@@ -138,20 +138,32 @@ func main() {
 			if !pending {
 				return nil
 			}
-			_, err = app.sync.FullSync()
-			return err
+			_, syncErr := app.sync.FullSync()
+			// "Pending" only means local changes that still need uploading. A
+			// later pull/avatar/attachment failure must not prevent logout once
+			// every local dirty row has already been accepted by the server.
+			pending, pendingErr := database.HasPendingChanges(user.ID)
+			if pendingErr != nil {
+				return pendingErr
+			}
+			if !pending {
+				return nil
+			}
+			if syncErr == nil {
+				return fmt.Errorf("local changes remain pending")
+			}
+			return syncErr
 		},
 		OnSync: func() (any, error) {
-			if !serverProxy.RefreshUserProfile() {
-				return nil, fmt.Errorf("用户资料或头像同步失败，请检查服务端 /api2/user/info 和头像文件")
-			}
+			// User profile/avatar refresh is not part of incremental note sync.
+			// A missing avatar must never prevent pending edits from uploading.
 			result := app.IncrSync()
 			return result, nil
 		},
 		OnFullSync: func() (any, error) {
-			if !serverProxy.RefreshUserProfile() {
-				return nil, fmt.Errorf("用户资料或头像同步失败，请检查服务端 /api2/user/info 和头像文件")
-			}
+			// Refresh profile information on full sync, but keep personal data
+			// synchronization available if the profile/avatar request fails.
+			serverProxy.RefreshUserProfile()
 			result := app.FullSyncForce()
 			return result, nil
 		},
