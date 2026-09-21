@@ -100,6 +100,64 @@ func TestFullSyncRepushesMissingDesktopNote(t *testing.T) {
 	}
 }
 
+func TestIncrementalSyncResolvesUploadConflict(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api2/note/updateNote":
+			w.Write([]byte(`{"Ok":false,"Msg":"conflict"}`))
+		case "/api2/note/getNote":
+			w.Write([]byte(`{"NoteId":"remote-note","NotebookId":"remote-book","UserId":"user1","Title":"Remote title","Usn":8}`))
+		case "/api2/note/getNoteContent":
+			w.Write([]byte(`{"Ok":true,"NoteId":"remote-note","Content":"remote body"}`))
+		case "/api2/note/addNote":
+			w.Write([]byte(`{"NoteId":"conflict-copy","NotebookId":"remote-book","UserId":"user1","Title":"Local title","Usn":9}`))
+		case "/api2/user/getSyncState":
+			w.Write([]byte(`{"LastSyncUsn":8,"LastSyncTime":0}`))
+		case "/api2/notebook/getSyncNotebooks", "/api2/note/getSyncNotes", "/api2/tag/getSyncTags":
+			w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	database, err := db.NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.InsertUser(&models.User{ID: "user1", Username: "tester", Host: server.URL, Token: "token", IsActive: true}); err != nil {
+		t.Fatal(err)
+	}
+	database.SetCurrentUser("user1")
+	if err := database.InsertNotebook(&models.Notebook{ID: "b", NotebookID: "local-book", ServerNotebookID: "remote-book", UserID: "user1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.InsertNote(&models.Note{ID: "n", NoteID: "local-note", ServerNoteID: "remote-note", NotebookID: "local-book", UserID: "user1", Title: "Local title", Content: "local body", Usn: 7, IsDirty: true, ContentIsDirty: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	info, err := NewSyncService(database, api.NewClient()).IncrSync()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Note.Conflicts) != 1 {
+		t.Fatalf("conflicts = %d, want 1", len(info.Note.Conflicts))
+	}
+	original, _ := database.GetNote("local-note")
+	if original == nil || original.IsDirty || original.Usn != 8 || original.Title != "Remote title" || original.Content != "remote body" {
+		t.Fatalf("original note was not refreshed from server: %+v", original)
+	}
+	copyNote := info.Note.Conflicts[0].ConflictCopy
+	if copyNote == nil || copyNote.Content != "local body" {
+		t.Fatalf("local edit was not preserved as conflict copy: %+v", copyNote)
+	}
+	uploadedCopy, _ := database.GetNote(copyNote.NoteID)
+	if uploadedCopy == nil || uploadedCopy.IsDirty || uploadedCopy.LocalIsNew || uploadedCopy.ServerNoteID != "conflict-copy" {
+		t.Fatalf("conflict copy was not uploaded: %+v", uploadedCopy)
+	}
+}
+
 func TestSameUSNNoteMoveUpdatesLocalNotebook(t *testing.T) {
 	database, err := db.NewInMemory()
 	if err != nil {

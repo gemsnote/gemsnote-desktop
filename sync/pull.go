@@ -290,7 +290,7 @@ func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.
 
 		conflictCopy, err := s.db.CopyNoteForConflict(localNote.NoteID)
 		if err != nil {
-			logrus.Errorf("Copy conflict note error: %v", err)
+			return fmt.Errorf("copy conflict note: %w", err)
 		}
 		if conflictCopy != nil {
 			syncInfo.Note.Conflicts = append(syncInfo.Note.Conflicts, &models.SyncConflict{
@@ -299,6 +299,16 @@ func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.
 				ConflictCopy: conflictCopy,
 			})
 		}
+		// The conflict copy owns the local edit. Replace the original row
+		// with the current server version so its USN becomes a valid base and
+		// the same conflict is not raised forever on every subsequent sync.
+		if err := s.db.UpdateNoteForce(serverNote, true); err != nil {
+			return err
+		}
+		if err := s.syncNoteContentAndFiles(localNote); err != nil {
+			return err
+		}
+		syncInfo.Note.Updates = append(syncInfo.Note.Updates, localNote.NoteID)
 		return nil
 	}
 

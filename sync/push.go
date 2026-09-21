@@ -204,6 +204,24 @@ func (s *SyncService) sendNoteChanges(userID string, syncInfo *models.SyncInfo) 
 			noteCopy := s.prepareNoteForUpload(note)
 			serverNote, apiErr := s.api.UpdateNote(noteCopy)
 			if apiErr != nil {
+				// Upload happens before pull to protect offline work. When the
+				// server USN has advanced, resolve that conflict immediately so
+				// it does not abort the entire sync before remote changes can be
+				// downloaded. processNoteSync either refreshes an identical note
+				// or preserves the local edit as a conflict copy.
+				if isConflictError(apiErr) {
+					remote, getErr := s.api.GetNote(note.ServerNoteID)
+					if getErr == nil && remote != nil && remote.NoteID != "" {
+						if resolveErr := s.processNoteSync(remote, syncInfo); resolveErr == nil {
+							continue
+						} else {
+							getErr = resolveErr
+						}
+					}
+					if getErr != nil {
+						apiErr = fmt.Errorf("resolve note conflict: %w", getErr)
+					}
+				}
 				// A valid local cache may still point at a note from a previous
 				// server installation. Re-create it remotely when the server
 				// explicitly says that the NoteId is unknown.
@@ -249,6 +267,13 @@ func isMissingRemoteNote(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "noteidnotexists") || strings.Contains(msg, "notexists")
+}
+
+func isConflictError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "conflict")
 }
 
 func isMissingRemoteNotebook(err error) bool {

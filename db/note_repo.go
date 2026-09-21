@@ -616,10 +616,14 @@ func (d *Database) CopyNoteForConflict(noteID string) (*models.Note, error) {
 		IsDirty:        true,
 		LocalIsNew:     true,
 		ConflictNoteID: noteID,
-		ConflictFixed:  false,
-		InitSync:       false,
-		CreatedTime:    original.CreatedTime,
-		UpdatedTime:    original.UpdatedTime,
+		// The current UI does not provide the legacy interactive conflict
+		// resolver. Keep the local edit as an ordinary new note and allow the
+		// second push pass to upload it automatically instead of leaving the
+		// client permanently dirty.
+		ConflictFixed: true,
+		InitSync:      false,
+		CreatedTime:   original.CreatedTime,
+		UpdatedTime:   original.UpdatedTime,
 	}
 
 	t := time.Now()
