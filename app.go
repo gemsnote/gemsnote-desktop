@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	stdsync "sync"
 	"time"
@@ -1630,6 +1631,16 @@ var AppVersion = api.ClientVersion
 
 func (a *App) GetVersion() string {
 	return AppVersion
+}
+
+func (a *App) GetAboutInfo() map[string]string {
+	return map[string]string{
+		"Name":     "Gemsnote",
+		"Version":  AppVersion,
+		"Platform": goruntime.GOOS,
+		"Arch":     goruntime.GOARCH,
+		"Runtime":  goruntime.Version(),
+	}
 }
 
 // 16. Local PDF generation using gopdf

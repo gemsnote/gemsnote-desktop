@@ -100,8 +100,6 @@ func main() {
 			wailsruntime.EventsEmit(app.ctx, "shared-notes-revoked", noteIDs)
 		}
 	}
-	appMenu := buildMenu(app, app.MenuLanguage())
-
 	dist, err := fs.Sub(assets, "frontend/dist")
 	if err != nil {
 		println("Failed to access embedded frontend:", err.Error())
@@ -184,7 +182,6 @@ func main() {
 		Bind: []interface{}{
 			app,
 		},
-		Menu: appMenu,
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "com.gemsnote.desktop",
 			OnSecondInstanceLaunch: func(secondInstanceData options.SecondInstanceData) {
