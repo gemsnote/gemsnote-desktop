@@ -38,7 +38,12 @@ func New(dbPath string) (*Database, error) {
 		return nil, fmt.Errorf("failed to create db directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
+	// Apply connection-local pragmas through the DSN so every pooled SQLite
+	// connection waits for a concurrent writer instead of immediately failing
+	// with SQLITE_BUSY. WAL itself is enabled by migrations.sql and persists in
+	// the database file.
+	dsn := dbPath + "?_pragma=busy_timeout(10000)&_pragma=foreign_keys(1)"
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
@@ -311,12 +316,8 @@ func (d *Database) HasPendingChanges(userID string) (bool, error) {
 			SELECT 1 FROM notes WHERE user_id = ? AND is_dirty = 1
 			UNION ALL
 			SELECT 1 FROM tags WHERE user_id = ? AND is_dirty = 1
-			UNION ALL
-			SELECT 1 FROM images WHERE user_id = ? AND is_dirty = 1
-			UNION ALL
-			SELECT 1 FROM attachs WHERE user_id = ? AND is_dirty = 1
 		)
-	`, userID, userID, userID, userID, userID).Scan(&pending)
+	`, userID, userID, userID).Scan(&pending)
 	return pending, err
 }
 

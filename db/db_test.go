@@ -557,4 +557,16 @@ func TestHasPendingChanges(t *testing.T) {
 	if err != nil || pending {
 		t.Fatalf("clean account pending=%v err=%v", pending, err)
 	}
+	// File rows are uploaded as part of their owning dirty note. An orphaned
+	// file must not keep the global pending marker lit forever.
+	if err := database.InsertImage(&models.Image{ID: "img", FileID: "orphan-image", UserID: "user1", IsDirty: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.InsertAttach(&models.Attach{ID: "att", FileID: "orphan-attach", NoteID: "remote-note", UserID: "user1", IsDirty: true}); err != nil {
+		t.Fatal(err)
+	}
+	pending, err = database.HasPendingChanges("user1")
+	if err != nil || pending {
+		t.Fatalf("orphan files must not count as pending: pending=%v err=%v", pending, err)
+	}
 }

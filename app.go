@@ -804,7 +804,12 @@ func (a *App) FullSync() map[string]interface{} {
 }
 
 func (a *App) IncrSync() map[string]interface{} {
-	a.syncRunMu.Lock()
+	// Coalesce repeated toolbar clicks and automatic sync triggers. Queuing a
+	// second complete sync behind the first only increases SQLite contention
+	// and provides no newer local snapshot than the running pass will upload.
+	if !a.syncRunMu.TryLock() {
+		return map[string]interface{}{"Ok": true, "AlreadyRunning": true}
+	}
 	defer a.syncRunMu.Unlock()
 	info, err := a.sync.IncrSync()
 	if err != nil {
