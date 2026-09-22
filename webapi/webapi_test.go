@@ -172,6 +172,28 @@ func TestSyncEndpoints(t *testing.T) {
 	}
 }
 
+func TestResetSyncRequiresConfirmation(t *testing.T) {
+	e := newTestEnv(t)
+	e.login(t)
+	called := false
+	e.handler.OnResetSync = func() (any, error) {
+		called = true
+		return map[string]any{"Ok": true, "Reset": true}, nil
+	}
+	_, body := e.get(t, "/api2/web/resetSync")
+	if called || !strings.Contains(string(body), "notFound") {
+		t.Fatalf("GET must not reset cache: %s", body)
+	}
+	_, body = e.post(t, "/api2/web/resetSync", url.Values{})
+	if called || !strings.Contains(string(body), "confirmationRequired") {
+		t.Fatalf("POST without confirmation must not reset cache: %s", body)
+	}
+	_, body = e.post(t, "/api2/web/resetSync", url.Values{"confirm": {"true"}})
+	if !called || !strings.Contains(string(body), `"Reset":true`) {
+		t.Fatalf("confirmed POST must invoke reset: %s", body)
+	}
+}
+
 func TestSharedBatchWritesAreRejected(t *testing.T) {
 	e := newTestEnv(t)
 	userID, notebookID := e.login(t)

@@ -163,6 +163,13 @@ func main() {
 			result := app.FullSyncForce()
 			return result, nil
 		},
+		OnResetSync: func() (any, error) {
+			result := app.ResetSync()
+			if result["Ok"] == true {
+				serverProxy.RefreshUserProfile()
+			}
+			return result, nil
+		},
 		OnSharedDownload: func() { go app.sharedSync.DownloadPending() },
 	}
 

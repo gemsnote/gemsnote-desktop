@@ -285,6 +285,8 @@ func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.
 		}
 
 		if serverContent == localNote.Content {
+			// Matching bodies need no conflict copy. Server metadata wins,
+			// regardless of local timestamps or metadata-only edits.
 			return s.db.UpdateNoteForce(serverNote, false)
 		}
 

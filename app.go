@@ -282,6 +282,48 @@ func (a *App) FullSyncForce() map[string]interface{} {
 	return result
 }
 
+// ResetSync is deliberately server-authoritative: unlike FullSync it drops
+// the active account's cache and does not upload pending local edits. The UI
+// must obtain explicit confirmation before calling the local bridge endpoint.
+func (a *App) ResetSync() map[string]interface{} {
+	result := map[string]interface{}{"Ok": false, "Full": true, "Reset": true}
+	a.syncRunMu.Lock()
+	defer a.syncRunMu.Unlock()
+	user, err := a.db.GetActiveUser()
+	if err != nil || user == nil || user.IsLocal || user.Host == "" || user.Token == "" || !utils.IsValidObjectId(user.ID) {
+		result["Msg"] = "resetSyncUnavailable"
+		a.emitSyncFinished(result)
+		return result
+	}
+	a.api.SetHost(user.Host)
+	a.api.SetToken(user.Token)
+	if _, err := a.api.GetLastSyncState(); err != nil {
+		result["Msg"] = fmt.Sprintf("server unavailable before reset: %v", err)
+		a.emitSyncFinished(result)
+		return result
+	}
+	accountID := db.SharedAccountID(user.Host, user.ID)
+	err = a.sharedSync.RunExclusive(func() error {
+		if err := a.db.ResetAccountCache(user.ID, accountID); err != nil {
+			return err
+		}
+		if err := a.files.DeleteUserDir(user.ID); err != nil {
+			return err
+		}
+		return os.RemoveAll(filepath.Join(a.files.GetDataDir(), "shared", accountID))
+	})
+	if err == nil {
+		_, err = a.sync.FullSync()
+	}
+	if err != nil {
+		result["Msg"] = err.Error()
+	} else {
+		result["Ok"] = true
+	}
+	a.emitSyncFinished(result)
+	return result
+}
+
 // emitSyncFinished tells the SPA a sync round just ended so it can reload the
 // lists that were rendered from the local database before the sync completed.
 func (a *App) emitSyncFinished(result map[string]interface{}) {

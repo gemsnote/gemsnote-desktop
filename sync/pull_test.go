@@ -158,6 +158,54 @@ func TestIncrementalSyncResolvesUploadConflict(t *testing.T) {
 	}
 }
 
+func TestUploadConflictUsesServerMetadataWhenBodyMatches(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api2/note/updateNote":
+			w.Write([]byte(`{"Ok":false,"Msg":"conflict"}`))
+		case "/api2/note/getNote":
+			w.Write([]byte(`{"NoteId":"remote-note","NotebookId":"remote-book-b","UserId":"user1","Title":"Server title","Tags":["server"],"IsStar":true,"Usn":8}`))
+		case "/api2/note/getNoteContent":
+			w.Write([]byte(`{"Ok":true,"NoteId":"remote-note","Content":"same body"}`))
+		case "/api2/user/getSyncState":
+			w.Write([]byte(`{"LastSyncUsn":8,"LastSyncTime":0}`))
+		case "/api2/notebook/getSyncNotebooks", "/api2/note/getSyncNotes", "/api2/tag/getSyncTags":
+			w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	database, err := db.NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.InsertUser(&models.User{ID: "user1", Username: "tester", Host: server.URL, Token: "token", IsActive: true}); err != nil {
+		t.Fatal(err)
+	}
+	database.SetCurrentUser("user1")
+	for _, id := range []string{"a", "b"} {
+		if err := database.InsertNotebook(&models.Notebook{ID: id, NotebookID: "local-book-" + id, ServerNotebookID: "remote-book-" + id, UserID: "user1", Title: id}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := database.InsertNote(&models.Note{ID: "n", NoteID: "local-note", ServerNoteID: "remote-note", NotebookID: "local-book-a", UserID: "user1", Title: "Local title", Tags: []string{"local"}, Content: "same body", Usn: 7, IsDirty: true}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := NewSyncService(database, api.NewClient()).IncrSync()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Note.Conflicts) != 0 {
+		t.Fatalf("metadata-only conflict made a copy: %+v", info.Note.Conflicts)
+	}
+	note, err := database.GetNote("local-note")
+	if err != nil || note == nil || note.IsDirty || note.Title != "Server title" || note.NotebookID != "local-book-b" || !note.IsStar || len(note.Tags) != 1 || note.Tags[0] != "server" {
+		t.Fatalf("server metadata did not win: note=%+v err=%v", note, err)
+	}
+}
+
 func TestSameUSNNoteMoveUpdatesLocalNotebook(t *testing.T) {
 	database, err := db.NewInMemory()
 	if err != nil {

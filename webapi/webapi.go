@@ -33,6 +33,7 @@ type Handler struct {
 	// written as the JSON response; a non-nil error becomes {Ok:false,Msg}.
 	OnSync           func() (any, error)
 	OnFullSync       func() (any, error)
+	OnResetSync      func() (any, error)
 	OnSharedDownload func()
 }
 
@@ -84,6 +85,7 @@ func isGetApiPath(path string) bool {
 		"/api2/web/bootstrap",
 		"/api2/web/sync",
 		"/api2/web/fullSync",
+		"/api2/web/resetSync",
 		"/api2/captcha/",
 		"/captcha/",
 		"/api2/attach/download",
@@ -151,6 +153,12 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) bool {
 		h.syncNow(w, h.OnSync)
 	case path == "/api2/web/fullSync" && method == http.MethodPost:
 		h.syncNow(w, h.OnFullSync)
+	case path == "/api2/web/resetSync" && method == http.MethodPost:
+		if h.form(r, "confirm") != "true" {
+			h.fail(w, "confirmationRequired")
+			return true
+		}
+		h.syncNow(w, h.OnResetSync)
 	case path == "/api2/web/logout" && method == http.MethodPost:
 		h.logoutJSON(w, r)
 	case path == "/api2/logout" && method == http.MethodPost:

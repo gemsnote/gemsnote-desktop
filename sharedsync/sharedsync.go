@@ -31,6 +31,7 @@ type Service struct {
 	files *service.FileService
 
 	mu      sync.Mutex
+	workMu  sync.Mutex
 	syncing bool
 
 	OnRevocation func(noteIDs []string)
@@ -69,7 +70,16 @@ func (s *Service) withLock(run func() error) error {
 		s.syncing = false
 		s.mu.Unlock()
 	}()
+	s.workMu.Lock()
+	defer s.workMu.Unlock()
+	return run()
+}
 
+// RunExclusive waits for any in-flight shared cache write before an account
+// reset and prevents the background downloader from recreating rows mid-reset.
+func (s *Service) RunExclusive(run func() error) error {
+	s.workMu.Lock()
+	defer s.workMu.Unlock()
 	return run()
 }
 
