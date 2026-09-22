@@ -2,9 +2,26 @@
 set -euo pipefail
 
 usage() {
-  echo "Usage: $0 <version> [linux|darwin] [amd64|arm64] [absolute-output-dir]" >&2
-  exit 2
+  cat >&2 <<EOF
+Usage: $0 <version> [linux|darwin] [amd64|arm64] [absolute-output-dir]
+
+Builds a release for the current host platform and architecture by default.
+The optional output directory must be an absolute path.
+
+Environment (Linux AppImage only):
+  APPIMAGE_RUNTIME_FILE  Path to a downloaded Type 2 runtime file. Use
+                         runtime-x86_64 on amd64 or runtime-aarch64 on arm64
+                         when appimagetool cannot download the runtime.
+
+Example:
+  APPIMAGE_RUNTIME_FILE=/absolute/path/to/runtime-x86_64 $0 1.0.0
+EOF
+  exit "${1:-2}"
 }
+
+if [[ $# -eq 1 && ( "$1" == "--help" || "$1" == "-h" ) ]]; then
+  usage 0
+fi
 
 [[ $# -ge 1 && $# -le 4 ]] || usage
 

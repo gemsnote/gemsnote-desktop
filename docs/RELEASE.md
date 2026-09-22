@@ -61,14 +61,14 @@ chmod +x appimagetool
 sudo mv appimagetool /usr/local/bin/
 ```
 
-如果 `appimagetool` 无法自动下载 Type 2 runtime，可从 [type2-runtime Releases](https://github.com/AppImage/type2-runtime/releases) 手工下载与构建平台匹配的文件，然后通过 `APPIMAGE_RUNTIME_FILE` 传给构建脚本。amd64 使用 `runtime-x86_64`，arm64 使用 `runtime-aarch64`：
+`APPIMAGE_RUNTIME_FILE` 是可选环境变量，仅在 Linux 构建 AppImage 时使用。通常无需设置；如果 `appimagetool` 下载 Type 2 runtime 失败（例如 GitHub 返回 504），可从 [type2-runtime Releases](https://github.com/AppImage/type2-runtime/releases) 手工下载**与当前构建架构一致**的 runtime：Linux amd64 用 `runtime-x86_64`，Linux arm64 用 `runtime-aarch64`。下载后将该变量设为本地文件的绝对路径，再运行构建脚本：
 
 ```bash
-APPIMAGE_RUNTIME_FILE=/absolute/path/to/runtime-x86_64 \
-  scripts/build-release.sh 1.0.0 linux amd64 /absolute/path/to/release
+APPIMAGE_RUNTIME_FILE=/absolute/path/to/runtime-x86_64 scripts/build-release.sh 1.0.0
+# Linux arm64 则使用 /absolute/path/to/runtime-aarch64
 ```
 
-路径必须指向实际 runtime 文件，建议使用绝对路径。脚本会将其作为 `appimagetool --runtime-file` 参数传入，因此构建期间不再需要在线下载 runtime。
+也可以和显式的平台、架构、输出目录参数一起使用。路径必须指向已下载的普通文件；脚本会检查文件是否存在，并将其作为 `appimagetool --runtime-file` 参数传入，从而跳过在线下载 runtime。该变量不会影响 ZIP 包或 macOS、Windows 构建。
 
 Linux ZIP 内含 `gemsnote.desktop` 和图标，手动安装时可将程序目录加入 `PATH`，再把 `.desktop` 文件复制到 `~/.local/share/applications/`。
 
@@ -89,6 +89,8 @@ scripts/build-release.sh <version> [linux|darwin] [amd64|arm64] [absolute-output
 ```
 
 平台、架构和输出目录可以省略，默认使用当前宿主平台、宿主架构和 `desktop-app/release/`。指定的平台和架构必须与宿主一致，输出目录如果指定则必须是绝对路径。
+
+Linux AppImage 构建遇到 runtime 下载失败时，按上文的 `APPIMAGE_RUNTIME_FILE` 说明指定已下载的架构匹配文件即可重试。
 
 ## Windows
 
