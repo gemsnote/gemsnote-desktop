@@ -145,12 +145,23 @@ func (c *Client) GetSyncNotes(afterUsn int64, maxEntry int) ([]*models.Note, err
 }
 
 func (c *Client) GetSyncNotesWithContent(afterUsn int64, maxEntry int) ([]*models.Note, error) {
-	resp, err := c.getWithClient(c.contentClient, "note/getSyncNotesWithContent", map[string]string{
+	params := map[string]string{
 		"afterUsn": strconv.FormatInt(afterUsn, 10),
 		"maxEntry": strconv.Itoa(maxEntry),
-	})
+	}
+	var resp *resty.Response
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		resp, err = c.getWithClient(c.contentClient, "note/getSyncNotesWithContent", params)
+		if err == nil && resp.StatusCode() < 500 {
+			break
+		}
+		if attempt < 3 {
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+		}
+	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("download note snapshot after 3 attempts: %w", err)
 	}
 	if err := checkSyncListResponse(resp.StatusCode(), resp.Body()); err != nil {
 		return nil, err

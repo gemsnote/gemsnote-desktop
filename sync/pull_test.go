@@ -63,6 +63,9 @@ func TestFreshSyncUsesPagedContentSnapshot(t *testing.T) {
 			w.Write([]byte(`[{"NotebookId":"remote-book","UserId":"user1","Title":"Book","Usn":1}]`))
 		case "/api2/note/getSyncNotesWithContent":
 			contentCalls++
+			if got := r.URL.Query().Get("maxEntry"); got != "20" {
+				t.Errorf("snapshot maxEntry=%q, want 20", got)
+			}
 			w.Write([]byte(`[{"NoteId":"remote-note","NotebookId":"remote-book","UserId":"user1","Title":"Note","Content":"snapshot body","Usn":2}]`))
 		case "/api2/note/getNoteContent":
 			singleContentCalls++

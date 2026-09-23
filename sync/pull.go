@@ -15,6 +15,8 @@ import (
 var imageFileIDRe = regexp.MustCompile(`fileId=([a-zA-Z0-9]{24})`)
 var serverImageRe = regexp.MustCompile(`(https?://[^\s"']+)/api2/file/getImage\?fileId=([a-zA-Z0-9]{24})`)
 
+const freshSyncPageSize = 20
+
 func (s *SyncService) syncNotebooks(afterUsn int64, syncInfo *models.SyncInfo) error {
 	logrus.Info("Syncing notebooks...")
 
@@ -144,8 +146,8 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 
 	for {
 		pageSize := s.maxEntry
-		if withContentSnapshot && pageSize > 50 {
-			pageSize = 50
+		if withContentSnapshot && pageSize > freshSyncPageSize {
+			pageSize = freshSyncPageSize
 		}
 		var notes []*models.Note
 		var err error
@@ -185,7 +187,11 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 			break
 		}
 
-		time.Sleep(500 * time.Millisecond)
+		// Snapshot pages already use a small batch size and are processed
+		// serially. Avoid adding an artificial delay to every reset-sync page.
+		if !withContentSnapshot {
+			time.Sleep(500 * time.Millisecond)
+		}
 	}
 	if afterUsn < 0 {
 		logrus.Infof("Full note snapshot received: %d", len(remoteIDs))

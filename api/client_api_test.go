@@ -44,6 +44,25 @@ func TestGetNoteContentRetriesTransientServerFailure(t *testing.T) {
 	}
 }
 
+func TestGetSyncNotesWithContentRetriesTransientServerFailure(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			http.Error(w, "temporary", http.StatusGatewayTimeout)
+			return
+		}
+		w.Write([]byte(`[{"NoteId":"note1","Content":"body","Usn":1}]`))
+	}))
+	defer server.Close()
+	client := NewClient()
+	client.SetHost(server.URL)
+	notes, err := client.GetSyncNotesWithContent(-1, 20)
+	if err != nil || len(notes) != 1 || notes[0].Content != "body" || calls != 3 {
+		t.Fatalf("notes=%+v calls=%d err=%v", notes, calls, err)
+	}
+}
+
 func TestClientErrorsRedactToken(t *testing.T) {
 	client := NewClient()
 	client.SetToken("secret-token")
