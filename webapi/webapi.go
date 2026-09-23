@@ -23,7 +23,12 @@ type Handler struct {
 	Proxy   *ServerProxy
 	Version string
 	Dist    fs.FS
-	OnLogin func()
+	// OnLogin decides how to initialize a successfully authenticated remote
+	// account. hasLocalCache is determined before any login-time sync runs.
+	OnLogin func(hasLocalCache bool) (any, error)
+	// OnSessionChanged prevents background jobs from outliving a local login
+	// session. It is called for remote and explicitly local accounts.
+	OnSessionChanged func(loggedIn bool)
 	// OnLogout is called synchronously before the local session is cleared.
 	// Returning an error keeps the session active so local changes are not
 	// discarded when the final sync cannot be completed.

@@ -11,24 +11,27 @@ import (
 )
 
 type Client struct {
-	client       *resty.Client
-	uploadClient *resty.Client
-	baseURL      string
-	token        string
-	version      string
-	macAddr      string
+	client        *resty.Client
+	uploadClient  *resty.Client
+	contentClient *resty.Client
+	baseURL       string
+	token         string
+	version       string
+	macAddr       string
 }
 
 const (
 	defaultRequestTimeout = 60 * time.Second
 	noteUploadTimeout     = 10 * time.Minute
+	noteContentTimeout    = 5 * time.Minute
 )
 
 func NewClient() *Client {
 	return &Client{
-		client:       resty.New().SetTimeout(defaultRequestTimeout),
-		uploadClient: resty.New().SetTimeout(noteUploadTimeout),
-		version:      "linux_amd64_2.0",
+		client:        resty.New().SetTimeout(defaultRequestTimeout),
+		uploadClient:  resty.New().SetTimeout(noteUploadTimeout),
+		contentClient: resty.New().SetTimeout(noteContentTimeout),
+		version:       "linux_amd64_2.0",
 	}
 }
 
@@ -40,6 +43,7 @@ func (c *Client) SetHost(host string) {
 	c.baseURL = host
 	c.client.SetBaseURL(host + "/api2")
 	c.uploadClient.SetBaseURL(host + "/api2")
+	c.contentClient.SetBaseURL(host + "/api2")
 }
 
 func (c *Client) SetMacAddr(addr string) {
@@ -79,12 +83,16 @@ func (c *Client) redactError(err error) error {
 }
 
 func (c *Client) get(path string, params map[string]string) (*resty.Response, error) {
+	return c.getWithClient(c.client, path, params)
+}
+
+func (c *Client) getWithClient(client *resty.Client, path string, params map[string]string) (*resty.Response, error) {
 	allParams := c.commonParams()
 	for k, v := range params {
 		allParams[k] = v
 	}
 
-	resp, err := c.client.R().SetQueryParams(allParams).Get(path)
+	resp, err := client.R().SetQueryParams(allParams).Get(path)
 	if err != nil {
 		err = c.redactError(err)
 		logrus.Errorf("API GET %s error: %v", path, err)

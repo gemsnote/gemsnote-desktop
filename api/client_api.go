@@ -12,6 +12,7 @@ import (
 
 	"github.com/gemsnote/gemsnote/models"
 	"github.com/gemsnote/gemsnote/utils"
+	"github.com/go-resty/resty/v2"
 )
 
 type AuthResponse struct {
@@ -172,11 +173,19 @@ func checkSyncListResponse(status int, body []byte) error {
 }
 
 func (c *Client) GetNoteContent(noteID string) (string, error) {
-	resp, err := c.get("note/getNoteContent", map[string]string{
-		"noteId": noteID,
-	})
+	var resp *resty.Response
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		resp, err = c.getWithClient(c.contentClient, "note/getNoteContent", map[string]string{"noteId": noteID})
+		if err == nil && (resp.StatusCode() < 500 || attempt == 3) {
+			break
+		}
+		if attempt < 3 {
+			time.Sleep(time.Duration(attempt) * 300 * time.Millisecond)
+		}
+	}
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("download failed after 3 attempts: %w", err)
 	}
 
 	var fields map[string]json.RawMessage

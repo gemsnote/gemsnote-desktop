@@ -110,6 +110,22 @@ func TestGuestBootstrapAndNotLogin(t *testing.T) {
 	}
 }
 
+func TestGuestBootstrapDoesNotContactConfiguredServer(t *testing.T) {
+	e := newTestEnv(t)
+	proxy := NewServerProxy(e.db, e.handler.Files)
+	proxy.SetHost("https://unreachable.example")
+	calls := 0
+	proxy.client.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls++
+		return nil, errors.New("must not be called")
+	})
+	e.handler.Proxy = proxy
+	_, body := e.get(t, "/api2/bootstrap")
+	if calls != 0 || !strings.Contains(string(body), `"User":null`) || !strings.Contains(string(body), `"Host":"https://unreachable.example"`) {
+		t.Fatalf("guest bootstrap contacted server or returned wrong state: calls=%d body=%s", calls, body)
+	}
+}
+
 func TestDesktopRegistrationIsDisabled(t *testing.T) {
 	e := newTestEnv(t)
 	status, body := e.post(t, "/api2/auth/register", url.Values{"email": {"new@example.com"}, "pwd": {"secret"}})
@@ -730,6 +746,8 @@ func TestForcedLogoutKeepsPendingCacheAndClearsSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.handler.OnLogout = func() error { return fmt.Errorf("must not sync") }
+	sessionLive := true
+	e.handler.OnSessionChanged = func(live bool) { sessionLive = live }
 
 	code, body := e.post(t, "/api2/web/logout", url.Values{"force": {"true"}})
 	if code != http.StatusOK || !strings.Contains(string(body), `"Ok":true`) {
@@ -737,6 +755,9 @@ func TestForcedLogoutKeepsPendingCacheAndClearsSession(t *testing.T) {
 	}
 	if active, _ := e.db.GetActiveUser(); active != nil {
 		t.Fatalf("user still active after forced logout: %+v", active)
+	}
+	if sessionLive {
+		t.Fatal("background session remained live after logout")
 	}
 	pending, err := e.db.HasPendingChanges(userID)
 	if err != nil || !pending {

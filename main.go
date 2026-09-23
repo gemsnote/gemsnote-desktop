@@ -113,15 +113,21 @@ func main() {
 		Proxy:   serverProxy,
 		Version: AppVersion,
 		Dist:    dist,
-		OnLogin: func() {
-			// A server login must not reuse the previous account's cursors. The
-			// personal full sync runs synchronously so the first workspace
-			// render already sees the server snapshot; the shared cache refresh
-			// stays independent in the background.
+		OnLogin: func(hasLocalCache bool) (any, error) {
+			if hasLocalCache {
+				app.SetAutoSyncPaused(true)
+				return map[string]interface{}{"SyncChoiceRequired": true}, nil
+			}
+			app.SetAutoSyncPaused(true)
+			result := app.ResetSync()
+			if result["Ok"] != true {
+				return map[string]interface{}{"InitialSyncError": result["Msg"]}, nil
+			}
 			serverProxy.RefreshUserProfile()
-			_ = app.FullSyncForce()
 			go app.sharedSync.SyncOnce()
+			return map[string]interface{}{"ResetSynced": true}, nil
 		},
+		OnSessionChanged: app.SetSessionLive,
 		OnLogout: func() error {
 			user, _ := database.GetActiveUser()
 			if user == nil || user.IsLocal || user.Host == "" || user.Token == "" {
@@ -153,12 +159,14 @@ func main() {
 		OnSync: func() (any, error) {
 			// User profile/avatar refresh is not part of incremental note sync.
 			// A missing avatar must never prevent pending edits from uploading.
+			app.SetAutoSyncPaused(false)
 			result := app.IncrSync()
 			return result, nil
 		},
 		OnFullSync: func() (any, error) {
 			// Refresh profile information on full sync, but keep personal data
 			// synchronization available if the profile/avatar request fails.
+			app.SetAutoSyncPaused(false)
 			serverProxy.RefreshUserProfile()
 			result := app.FullSyncForce()
 			return result, nil
@@ -217,7 +225,7 @@ func main() {
 
 func (a *App) startAutoSync() {
 	go func() {
-		if user, _ := a.db.GetActiveUser(); user != nil && user.Token != "" {
+		if user, _ := a.db.GetActiveUser(); user != nil && user.Token != "" && a.CanAutoSync() {
 			a.IncrSync()
 			a.sharedSync.SyncOnce()
 		}
@@ -228,11 +236,11 @@ func (a *App) startAutoSync() {
 		for {
 			select {
 			case <-ticker.C:
-				if user, _ := a.db.GetActiveUser(); user != nil && user.Token != "" && !a.IsSyncing() {
+				if user, _ := a.db.GetActiveUser(); user != nil && user.Token != "" && !a.IsSyncing() && a.CanAutoSync() {
 					a.IncrSync()
 				}
 			case <-sharedTicker.C:
-				if user, _ := a.db.GetActiveUser(); user != nil && user.Token != "" {
+				if user, _ := a.db.GetActiveUser(); user != nil && user.Token != "" && a.CanAutoSync() {
 					a.sharedSync.SyncOnce()
 				}
 			}

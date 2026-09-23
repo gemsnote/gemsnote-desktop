@@ -20,6 +20,28 @@ func TestNoteUploadsUseDedicatedLongTimeout(t *testing.T) {
 	if got := client.uploadClient.GetClient().Timeout; got != noteUploadTimeout {
 		t.Fatalf("note upload timeout = %v, want %v", got, noteUploadTimeout)
 	}
+	if got := client.contentClient.GetClient().Timeout; got != noteContentTimeout {
+		t.Fatalf("note content timeout = %v, want %v", got, noteContentTimeout)
+	}
+}
+
+func TestGetNoteContentRetriesTransientServerFailure(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			http.Error(w, "temporary", http.StatusGatewayTimeout)
+			return
+		}
+		w.Write([]byte(`{"Ok":true,"NoteId":"note1","Content":"body"}`))
+	}))
+	defer server.Close()
+	client := NewClient()
+	client.SetHost(server.URL)
+	content, err := client.GetNoteContent("note1")
+	if err != nil || content != "body" || calls != 3 {
+		t.Fatalf("content=%q calls=%d err=%v", content, calls, err)
+	}
 }
 
 func TestClientErrorsRedactToken(t *testing.T) {

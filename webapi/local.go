@@ -136,12 +136,12 @@ func (h *Handler) userLogo(userID string) string {
 func (h *Handler) bootstrap(w http.ResponseWriter) {
 	user := h.activeUser()
 	if user == nil {
-		openRegister, needCaptcha := false, false
-		if h.Proxy != nil {
-			openRegister, needCaptcha = h.Proxy.GuestConfig()
-		}
+		// Authentication state is local and must be available immediately at
+		// startup. Do not block the login page on an unreachable previous server;
+		// desktop registration is disabled and login does not use this bootstrap's
+		// remote captcha flags.
 		host, _ := h.DB.GetConfig("host")
-		h.writeJSON(w, map[string]any{"Ok": true, "User": nil, "OpenRegister": openRegister, "NeedCaptcha": needCaptcha, "Desktop": true, "Host": host})
+		h.writeJSON(w, map[string]any{"Ok": true, "User": nil, "OpenRegister": false, "NeedCaptcha": false, "Desktop": true, "Host": host})
 		return
 	}
 
@@ -1101,9 +1101,18 @@ func (h *Handler) doLogin(w http.ResponseWriter, r *http.Request) {
 	// server's cache without validating credentials against the new server.
 	if h.Proxy != nil && h.Proxy.configured() {
 		if ok, msg := h.Proxy.LoginServer(email, pwd); ok {
-			h.adoptServerUser(email, pwd)
-			h.fireLoginHook()
+			hasLocalCache := h.adoptServerUser(email, pwd)
+			if h.OnSessionChanged != nil {
+				h.OnSessionChanged(true)
+			}
 			result := map[string]any{"Ok": true}
+			if loginResult, err := h.fireLoginHook(hasLocalCache); err != nil {
+				result["InitialSyncError"] = err.Error()
+			} else if fields, ok := loginResult.(map[string]interface{}); ok {
+				for key, value := range fields {
+					result[key] = value
+				}
+			}
 			if notice := h.Proxy.VersionNotice(); notice != "" {
 				result["Notice"] = notice
 			}
@@ -1130,7 +1139,9 @@ func (h *Handler) doLogin(w http.ResponseWriter, r *http.Request) {
 		h.DB.SetCurrentUser(user.ID)
 		h.Files.InitUserDirs(user.ID)
 		h.DB.UpdateLastLoginTime(user.ID)
-		h.fireLoginHook()
+		if h.OnSessionChanged != nil {
+			h.OnSessionChanged(true)
+		}
 		h.writeJSON(w, map[string]any{"Ok": true})
 		return
 	}
@@ -1138,18 +1149,31 @@ func (h *Handler) doLogin(w http.ResponseWriter, r *http.Request) {
 	h.fail(w, "userNotExist")
 }
 
-func (h *Handler) adoptServerUser(email, pwd string) {
-	serverUser := h.Proxy.fetchServerUser()
+func (h *Handler) adoptServerUser(email, pwd string) bool {
+	// LoginServer already parsed the authenticated identity and token. Reuse
+	// them instead of issuing user/info plus a second auth/login before the UI
+	// can show its cache decision dialog.
+	serverUser := h.Proxy.remoteUser
 	if serverUser == nil {
-		serverUser = h.Proxy.remoteUser
-	}
-	if serverUser == nil {
-		return
+		return false
 	}
 	host, _ := h.DB.GetConfig("host")
+	hasLocalCache := false
+	existing, _ := h.DB.GetUser(serverUser.ID)
+	if existing != nil {
+		if db.SharedAccountID(existing.Host, serverUser.ID) == db.SharedAccountID(host, serverUser.ID) {
+			hasLocalCache, _ = h.DB.HasAccountCache(serverUser.ID)
+		}
+		if serverUser.Username == "" {
+			serverUser.Username = existing.Username
+		}
+		if serverUser.Email == "" {
+			serverUser.Email = existing.Email
+		}
+	}
 	serverUser.Host = host
 	serverUser.Pwd = utils.MD5WithSalt(pwd, serverUser.ID)
-	if existing, _ := h.DB.GetUser(serverUser.ID); existing != nil {
+	if existing != nil {
 		h.DB.UpdateUser(serverUser)
 	} else {
 		h.DB.InsertUser(serverUser)
@@ -1157,20 +1181,19 @@ func (h *Handler) adoptServerUser(email, pwd string) {
 	h.DB.SwitchUser(serverUser.ID)
 	h.DB.SetCurrentUser(serverUser.ID)
 	h.Files.InitUserDirs(serverUser.ID)
-	if token := h.Proxy.FetchAPIToken(email, pwd); token != "" {
-		h.DB.UpdateUserToken(serverUser.ID, token)
+	if h.Proxy.token != "" {
+		h.DB.UpdateUserToken(serverUser.ID, h.Proxy.token)
 	}
 	h.DB.SetConfig("proxy:email", email)
 	h.DB.SetConfig("proxy:pwd", pwd)
+	return hasLocalCache
 }
 
-// fireLoginHook runs the initial server snapshot synchronously: the SPA
-// navigates to the workspace as soon as /doLogin responds, so the personal
-// data must already be in the local database or the workspace renders empty.
-func (h *Handler) fireLoginHook() {
+func (h *Handler) fireLoginHook(hasLocalCache bool) (any, error) {
 	if h.OnLogin != nil {
-		h.OnLogin()
+		return h.OnLogin(hasLocalCache)
 	}
+	return nil, nil
 }
 
 func (h *Handler) verifyLocalPassword(user *models.User, password string) string {
@@ -1213,14 +1236,27 @@ func (h *Handler) performLogout(force bool) error {
 			return err
 		}
 	}
+	if h.OnSessionChanged != nil {
+		h.OnSessionChanged(false)
+	}
+	restoreSession := func(err error) error {
+		if h.OnSessionChanged != nil {
+			h.OnSessionChanged(true)
+		}
+		return err
+	}
+	if user := h.activeUser(); user != nil {
+		if err := h.DB.UpdateUserToken(user.ID, ""); err != nil {
+			return restoreSession(err)
+		}
+	}
+	if err := h.DB.DeactivateAllUsers(); err != nil {
+		return restoreSession(err)
+	}
+	h.DB.SetCurrentUser("")
 	if h.Proxy != nil {
 		h.Proxy.Logout()
 	}
-	if user := h.activeUser(); user != nil {
-		h.DB.UpdateUserToken(user.ID, "")
-	}
-	h.DB.DeactivateAllUsers()
-	h.DB.SetCurrentUser("")
 	return nil
 }
 

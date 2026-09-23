@@ -321,6 +321,27 @@ func (d *Database) HasPendingChanges(userID string) (bool, error) {
 	return pending, err
 }
 
+// HasAccountCache reports whether personal data has already been cached for
+// an account. The user/session row itself is not cache content: an account
+// whose initial download never completed must be treated as a fresh login.
+func (d *Database) HasAccountCache(userID string) (bool, error) {
+	var cached bool
+	err := d.db.QueryRow(`
+		SELECT EXISTS(
+			SELECT 1 FROM notebooks WHERE user_id = ?
+			UNION ALL
+			SELECT 1 FROM notes WHERE user_id = ?
+			UNION ALL
+			SELECT 1 FROM tags WHERE user_id = ?
+			UNION ALL
+			SELECT 1 FROM images WHERE user_id = ?
+			UNION ALL
+			SELECT 1 FROM attachs WHERE user_id = ?
+		)
+	`, userID, userID, userID, userID, userID).Scan(&cached)
+	return cached, err
+}
+
 func (d *Database) SetUserHasDB(userID string, hasDB bool) error {
 	val := 0
 	if hasDB {

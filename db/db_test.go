@@ -51,6 +51,26 @@ func TestInsertAndGetUser(t *testing.T) {
 	}
 }
 
+func TestHasAccountCacheIgnoresUserRowAndDetectsContent(t *testing.T) {
+	database, err := NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.InsertUser(&models.User{ID: "user1", Username: "tester", IsActive: true}); err != nil {
+		t.Fatal(err)
+	}
+	if cached, err := database.HasAccountCache("user1"); err != nil || cached {
+		t.Fatalf("user row alone must not count as cache: cached=%v err=%v", cached, err)
+	}
+	if err := database.InsertNotebook(&models.Notebook{ID: "book1", NotebookID: "book1", UserID: "user1", Title: "Cached"}); err != nil {
+		t.Fatal(err)
+	}
+	if cached, err := database.HasAccountCache("user1"); err != nil || !cached {
+		t.Fatalf("notebook must count as cache: cached=%v err=%v", cached, err)
+	}
+}
+
 func TestUpdateLastSyncUsn(t *testing.T) {
 	database, err := NewInMemory()
 	if err != nil {

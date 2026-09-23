@@ -33,6 +33,7 @@ type ServerProxy struct {
 	token            string
 	remoteUser       *models.User
 	versionNotice    string
+	remoteLogo       string
 }
 
 func NewServerProxy(database *db.Database, files *service.FileService) *ServerProxy {
@@ -204,40 +205,28 @@ func (p *ServerProxy) LoginServer(email, pwd string) (bool, string) {
 		return false, msg
 	}
 	var auth struct {
-		Token    string `json:"Token"`
-		UserID   string `json:"UserId"`
-		Username string `json:"Username"`
-		Email    string `json:"Email"`
+		Token string `json:"Token"`
+		User  struct {
+			UserID   string `json:"UserId"`
+			Username string `json:"Username"`
+			Email    string `json:"Email"`
+			Logo     string `json:"Logo"`
+		} `json:"User"`
+		Server struct {
+			Name       string `json:"Name"`
+			Version    string `json:"Version"`
+			MinVersion string `json:"MinVersion"`
+		} `json:"Server"`
 	}
-	_ = json.Unmarshal(data, &auth)
+	if json.Unmarshal(data, &auth) != nil || auth.Token == "" || auth.User.UserID == "" || auth.Server.Name == "" || auth.Server.Version == "" {
+		return false, "incompatibleServer"
+	}
 	p.email, p.pwd, p.token, p.sessionOk = email, pwd, auth.Token, true
 	p.browserSessionOk = false
-	if auth.UserID != "" {
-		p.remoteUser = &models.User{ID: auth.UserID, Username: auth.Username, Email: auth.Email, IsActive: true}
-	}
-	p.versionNotice = p.checkServerVersion()
+	p.remoteUser = &models.User{ID: auth.User.UserID, Username: auth.User.Username, Email: auth.User.Email, IsActive: true}
+	p.remoteLogo = auth.User.Logo
+	p.versionNotice = gemsnoteapi.ServerVersionNotice(&gemsnoteapi.ServerVersion{Server: auth.Server.Name, Version: auth.Server.Version, MinVersion: auth.Server.MinVersion}, nil)
 	return true, ""
-}
-
-// checkServerVersion distinguishes Gemsnote from an older Leanote endpoint.
-// An empty notice means the server could not be checked; login remains usable.
-func (p *ServerProxy) checkServerVersion() string {
-	resp, err := p.client.Get(p.host() + "/api2/system/version")
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotFound {
-		return "serverMigrationRequired"
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return ""
-	}
-	var info gemsnoteapi.ServerVersion
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		return ""
-	}
-	return gemsnoteapi.ServerVersionNotice(&info, nil)
 }
 
 func (p *ServerProxy) VersionNotice() string { return p.versionNotice }
@@ -288,24 +277,6 @@ func (p *ServerProxy) fetchHistories(noteID string) ([]map[string]any, bool) {
 		})
 	}
 	return items, true
-}
-
-func (p *ServerProxy) FetchAPIToken(email, pwd string) string {
-	if !p.configured() {
-		return ""
-	}
-	data, _, _, err := p.callJSON(http.MethodPost, "/api2/auth/login", map[string]string{"email": email, "pwd": pwd})
-	if err != nil {
-		return ""
-	}
-	var payload struct {
-		Ok    bool
-		Token string
-	}
-	if json.Unmarshal(data, &payload) != nil || !payload.Ok {
-		return ""
-	}
-	return payload.Token
 }
 
 func (p *ServerProxy) fetchServerUser() *models.User {

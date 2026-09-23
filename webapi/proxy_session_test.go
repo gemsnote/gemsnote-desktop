@@ -3,6 +3,7 @@ package webapi
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
@@ -17,12 +18,16 @@ import (
 	"github.com/gemsnote/gemsnote/utils"
 )
 
+func api2LoginResponse(userID string) string {
+	return fmt.Sprintf(`{"Ok":true,"Token":"test-token","User":{"UserId":%q,"Username":"tester","Email":"tester@example.test","Logo":""},"Server":{"Name":"gemsnote","Version":"1.0.0","MinVersion":""}}`, userID)
+}
+
 func TestSharedNotebooksRestoresAndRenewsSession(t *testing.T) {
 	var logins atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api2/auth/login":
-			w.Write([]byte(`{"Ok":true,"Token":"token","UserId":"admin"}`))
+			w.Write([]byte(api2LoginResponse("admin")))
 		case "/api2/auth/session":
 			logins.Add(1)
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
@@ -67,7 +72,7 @@ func TestAccountGroupsUsesBrowserSession(t *testing.T) {
 		switch r.URL.Path {
 		case "/api2/auth/login":
 			tokenLogins.Add(1)
-			w.Write([]byte(`{"Ok":true,"Token":"token","UserId":"user1"}`))
+			w.Write([]byte(api2LoginResponse("user1")))
 		case "/api2/auth/session":
 			sessionLogins.Add(1)
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
@@ -102,7 +107,7 @@ func TestAccountUpdateUsesBrowserSessionAndPreservesJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api2/auth/login":
-			w.Write([]byte(`{"Ok":true,"Token":"token","UserId":"user1"}`))
+			w.Write([]byte(api2LoginResponse("user1")))
 		case "/api2/auth/session":
 			sessionLogins.Add(1)
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
@@ -150,7 +155,7 @@ func TestUpdatePasswordCachesOnlyConfirmedRemoteChange(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api2/auth/login":
-			w.Write([]byte(`{"Ok":true,"Token":"token","UserId":"` + userID + `"}`))
+			w.Write([]byte(api2LoginResponse(userID)))
 		case "/api2/auth/session":
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
 			w.Write([]byte(`{"Ok":true}`))
@@ -201,7 +206,7 @@ func TestAvatarUploadForwardsAjaxHeader(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api2/auth/login":
-			w.Write([]byte(`{"Ok":true,"Token":"token","UserId":"` + userID + `"}`))
+			w.Write([]byte(api2LoginResponse(userID)))
 		case "/api2/auth/session":
 			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
 			w.Write([]byte(`{"Ok":true}`))
@@ -267,7 +272,7 @@ func TestProfileAvatarUsesTokenAndCachesImage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api2/auth/login":
-			w.Write([]byte(`{"Ok":true,"Token":"test-token","UserId":"user1"}`))
+			w.Write([]byte(api2LoginResponse("user1")))
 		case "/api2/system/version":
 			w.Write([]byte(`{"server":"gemsnote","version":"1.0.0"}`))
 		case "/api2/user/info":
@@ -309,13 +314,69 @@ func TestProfileAvatarUsesTokenAndCachesImage(t *testing.T) {
 	}
 }
 
+func TestRemoteLoginReportsWhetherAccountCacheExists(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		withCache bool
+	}{
+		{name: "fresh account", withCache: false},
+		{name: "cached account", withCache: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			authCalls, profileCalls := 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api2/auth/login":
+					authCalls++
+					w.Write([]byte(api2LoginResponse("user1")))
+				case "/api2/system/version":
+					w.Write([]byte(`{"server":"gemsnote","version":"1.0.0"}`))
+				case "/api2/user/info":
+					profileCalls++
+					w.Write([]byte(`{"UserId":"user1","Username":"tester"}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			e := newTestEnv(t)
+			if tc.withCache {
+				if err := e.db.InsertUser(&models.User{ID: "user1", Username: "tester", Host: server.URL}); err != nil {
+					t.Fatal(err)
+				}
+				if err := e.db.InsertNotebook(&models.Notebook{ID: "book1", NotebookID: "book1", UserID: "user1", Title: "Cached"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			proxy := NewServerProxy(e.db, e.handler.Files)
+			proxy.SetHost(server.URL)
+			e.handler.Proxy = proxy
+			var hookCache bool
+			var sessionLive bool
+			e.handler.OnSessionChanged = func(live bool) { sessionLive = live }
+			e.handler.OnLogin = func(hasLocalCache bool) (any, error) {
+				hookCache = hasLocalCache
+				return map[string]any{"SyncChoiceRequired": hasLocalCache}, nil
+			}
+			var result map[string]any
+			e.postJSON(t, "/api2/auth/session", url.Values{"email": {"tester"}, "pwd": {"secret"}}, &result)
+			if result["Ok"] != true || !sessionLive || hookCache != tc.withCache || (result["SyncChoiceRequired"] == true) != tc.withCache {
+				t.Fatalf("login cache decision mismatch: result=%v sessionLive=%v hookCache=%v", result, sessionLive, hookCache)
+			}
+			if authCalls != 1 || profileCalls != 0 {
+				t.Fatalf("login performed redundant requests: auth=%d profile=%d", authCalls, profileCalls)
+			}
+		})
+	}
+}
+
 func TestProfileRefreshAcceptsDefaultOrMissingAvatar(t *testing.T) {
 	for _, avatar := range []string{"/images/blog/default_avatar.png", "/missing/avatar.png"} {
 		t.Run(avatar, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api2/auth/login":
-					w.Write([]byte(`{"Ok":true,"Token":"test-token","UserId":"user1"}`))
+					w.Write([]byte(api2LoginResponse("user1")))
 				case "/api2/system/version":
 					w.Write([]byte(`{"server":"gemsnote","version":"1.0.0"}`))
 				case "/api2/user/info":

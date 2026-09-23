@@ -10,6 +10,7 @@ import (
 	goruntime "runtime"
 	"strings"
 	stdsync "sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/signintech/gopdf"
@@ -30,6 +31,7 @@ type App struct {
 	api         *api.Client
 	sync        *sync.SyncService
 	syncRunMu   stdsync.Mutex
+	sessionLive atomic.Bool
 	sharedSync  *sharedsync.Service
 	files       *service.FileService
 	webCallback WebCallbackFunc
@@ -54,6 +56,9 @@ func (a *App) startup(ctx context.Context) {
 	a.sync = sync.NewSyncService(a.db, a.api)
 	a.SetSyncProgressCallback()
 	a.restoreSession()
+	if user, _ := a.db.GetActiveUser(); user != nil && user.Token != "" {
+		a.sessionLive.Store(true)
+	}
 	a.startAutoSync()
 }
 
@@ -120,16 +125,26 @@ func (a *App) Login(email, password, host string) map[string]interface{} {
 		IsActive: true,
 	}
 
-	a.db.InsertUser(user)
+	existing, _ := a.db.GetUser(user.ID)
+	hasLocalCache := false
+	if existing != nil && db.SharedAccountID(existing.Host, user.ID) == db.SharedAccountID(host, user.ID) {
+		hasLocalCache, _ = a.db.HasAccountCache(user.ID)
+	}
+	if existing != nil {
+		user.LastSyncUsn = existing.LastSyncUsn
+		user.NotebookUsn = existing.NotebookUsn
+		user.NoteUsn = existing.NoteUsn
+		user.TagUsn = existing.TagUsn
+		_ = a.db.UpdateUser(user)
+	} else {
+		_ = a.db.InsertUser(user)
+	}
+	_ = a.db.SwitchUser(user.ID)
 	a.db.SetCurrentUser(user.ID)
 	a.api.SetToken(resp.Token)
 	a.api.SetHost(host)
 	a.files.InitUserDirs(user.ID)
-	// A successful remote login always starts from a full server snapshot.
-	// Keep the local cache for offline use, but never trust its old cursors.
-	if err := a.runFullSync(true); err != nil {
-		return map[string]interface{}{"Ok": false, "Msg": err.Error()}
-	}
+	a.sessionLive.Store(true)
 	serverVersion, versionErr := a.api.GetServerVersion()
 	result := map[string]interface{}{
 		"Ok":       true,
@@ -137,6 +152,17 @@ func (a *App) Login(email, password, host string) map[string]interface{} {
 		"Username": resp.Username,
 		"Email":    resp.Email,
 		"Token":    resp.Token,
+	}
+	if hasLocalCache {
+		a.SetAutoSyncPaused(true)
+		result["SyncChoiceRequired"] = true
+	} else {
+		a.SetAutoSyncPaused(true)
+		if reset := a.ResetSync(); reset["Ok"] == true {
+			result["ResetSynced"] = true
+		} else {
+			result["InitialSyncError"] = reset["Msg"]
+		}
 	}
 	if serverVersion != nil {
 		result["Server"] = serverVersion.Server
@@ -181,6 +207,7 @@ func (a *App) Logout() map[string]interface{} {
 	}
 	a.db.DeactivateAllUsers()
 	a.db.SetCurrentUser("")
+	a.sessionLive.Store(false)
 	return map[string]interface{}{"Ok": true}
 }
 
@@ -319,9 +346,37 @@ func (a *App) ResetSync() map[string]interface{} {
 		result["Msg"] = err.Error()
 	} else {
 		result["Ok"] = true
+		a.SetAutoSyncPaused(false)
 	}
 	a.emitSyncFinished(result)
 	return result
+}
+
+func (a *App) SetAutoSyncPaused(paused bool) {
+	user, _ := a.db.GetActiveUser()
+	if user == nil {
+		return
+	}
+	value := "false"
+	if paused {
+		value = "true"
+	}
+	_ = a.db.SetConfig("sync:paused:"+user.ID, value)
+}
+
+func (a *App) IsAutoSyncPaused() bool {
+	user, _ := a.db.GetActiveUser()
+	if user == nil {
+		return false
+	}
+	value, _ := a.db.GetConfig("sync:paused:" + user.ID)
+	return value == "true"
+}
+
+func (a *App) SetSessionLive(live bool) { a.sessionLive.Store(live) }
+
+func (a *App) CanAutoSync() bool {
+	return a.sessionLive.Load() && !a.IsAutoSyncPaused()
 }
 
 // emitSyncFinished tells the SPA a sync round just ended so it can reload the
@@ -846,6 +901,9 @@ func (a *App) FullSync() map[string]interface{} {
 }
 
 func (a *App) IncrSync() map[string]interface{} {
+	if !a.sessionLive.Load() {
+		return map[string]interface{}{"Ok": true, "Skipped": "notLoggedIn"}
+	}
 	// Coalesce repeated toolbar clicks and automatic sync triggers. Queuing a
 	// second complete sync behind the first only increases SQLite contention
 	// and provides no newer local snapshot than the running pass will upload.
@@ -1063,6 +1121,7 @@ func (a *App) LoginLocal(username, password string) map[string]interface{} {
 	a.db.SetCurrentUser(user.ID)
 	a.files.InitUserDirs(user.ID)
 	a.db.UpdateLastLoginTime(user.ID)
+	a.sessionLive.Store(true)
 
 	return map[string]interface{}{
 		"Ok":       true,
