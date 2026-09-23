@@ -144,6 +144,24 @@ func (c *Client) GetSyncNotes(afterUsn int64, maxEntry int) ([]*models.Note, err
 	return notes, nil
 }
 
+func (c *Client) GetSyncNotesWithContent(afterUsn int64, maxEntry int) ([]*models.Note, error) {
+	resp, err := c.getWithClient(c.contentClient, "note/getSyncNotesWithContent", map[string]string{
+		"afterUsn": strconv.FormatInt(afterUsn, 10),
+		"maxEntry": strconv.Itoa(maxEntry),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := checkSyncListResponse(resp.StatusCode(), resp.Body()); err != nil {
+		return nil, err
+	}
+	var notes []*models.Note
+	if err := json.Unmarshal(resp.Body(), &notes); err != nil {
+		return nil, err
+	}
+	return notes, nil
+}
+
 func (c *Client) GetSyncTags(afterUsn int64, maxEntry int) ([]*models.Tag, error) {
 	resp, err := c.get("tag/getSyncTags", map[string]string{
 		"afterUsn": strconv.FormatInt(afterUsn, 10),

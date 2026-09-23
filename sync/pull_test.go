@@ -53,6 +53,48 @@ func TestIncrementalSyncUploadsDirtyDataBeforePulling(t *testing.T) {
 	}
 }
 
+func TestFreshSyncUsesPagedContentSnapshot(t *testing.T) {
+	contentCalls, singleContentCalls := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api2/user/getSyncState":
+			w.Write([]byte(`{"Ok":true,"LastSyncUsn":2,"LastSyncTime":0}`))
+		case "/api2/notebook/getSyncNotebooks":
+			w.Write([]byte(`[{"NotebookId":"remote-book","UserId":"user1","Title":"Book","Usn":1}]`))
+		case "/api2/note/getSyncNotesWithContent":
+			contentCalls++
+			w.Write([]byte(`[{"NoteId":"remote-note","NotebookId":"remote-book","UserId":"user1","Title":"Note","Content":"snapshot body","Usn":2}]`))
+		case "/api2/note/getNoteContent":
+			singleContentCalls++
+			w.Write([]byte(`{"Ok":true,"Content":"unexpected"}`))
+		case "/api2/tag/getSyncTags":
+			w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	database, err := db.NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.InsertUser(&models.User{ID: "user1", Username: "tester", Host: server.URL, Token: "token", IsActive: true}); err != nil {
+		t.Fatal(err)
+	}
+	database.SetCurrentUser("user1")
+	if _, err := NewSyncService(database, api.NewClient()).FreshSync(); err != nil {
+		t.Fatal(err)
+	}
+	note, err := database.GetNoteByServerID("remote-note")
+	if err != nil || note == nil || note.Content != "snapshot body" || note.InitSync {
+		t.Fatalf("snapshot note not cached: note=%+v err=%v", note, err)
+	}
+	if contentCalls != 1 || singleContentCalls != 0 {
+		t.Fatalf("snapshot calls=%d single content calls=%d", contentCalls, singleContentCalls)
+	}
+}
+
 func TestFullSyncRepushesMissingDesktopNote(t *testing.T) {
 	addCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

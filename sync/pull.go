@@ -133,13 +133,27 @@ func (s *SyncService) processNotebookSync(serverNb *models.Notebook, syncInfo *m
 }
 
 func (s *SyncService) syncNotes(afterUsn int64, syncInfo *models.SyncInfo) error {
+	return s.syncNotesMode(afterUsn, syncInfo, false)
+}
+
+func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, withContentSnapshot bool) error {
 	logrus.Info("Syncing notes...")
 
 	currentUsn := afterUsn
 	remoteIDs := make(map[string]bool)
 
 	for {
-		notes, err := s.api.GetSyncNotes(currentUsn, s.maxEntry)
+		pageSize := s.maxEntry
+		if withContentSnapshot && pageSize > 50 {
+			pageSize = 50
+		}
+		var notes []*models.Note
+		var err error
+		if withContentSnapshot {
+			notes, err = s.api.GetSyncNotesWithContent(currentUsn, pageSize)
+		} else {
+			notes, err = s.api.GetSyncNotes(currentUsn, pageSize)
+		}
 		if err != nil {
 			return err
 		}
@@ -167,7 +181,7 @@ func (s *SyncService) syncNotes(afterUsn int64, syncInfo *models.SyncInfo) error
 			}
 		}
 
-		if len(notes) < s.maxEntry {
+		if len(notes) < pageSize {
 			break
 		}
 
@@ -239,8 +253,15 @@ func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.
 		}
 		if created != nil {
 			syncInfo.Note.Adds = append(syncInfo.Note.Adds, created.NoteID)
-			if err := s.syncNoteContentAndFiles(created); err != nil {
-				return err
+			if serverNote.ContentPresent {
+				content := s.localizeNoteContent(serverNote.Content)
+				if err := s.db.UpdateNoteContent(created.NoteID, content); err != nil {
+					return err
+				}
+			} else {
+				if err := s.syncNoteContentAndFiles(created); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -331,15 +352,19 @@ func (s *SyncService) syncNoteContentAndFiles(note *models.Note) error {
 		return fmt.Errorf("get note content %s: %w", note.NoteID, err)
 	}
 
-	user, _ := s.db.GetActiveUser()
-	if user != nil && user.Host != "" {
-		localPrefix := "/api2/file/getImage"
-		content = utils.FixNoteContent(content, user.Host, localPrefix)
-	}
+	content = s.localizeNoteContent(content)
 
 	s.downloadContentImages(content)
 
 	return s.db.UpdateNoteContent(note.NoteID, content)
+}
+
+func (s *SyncService) localizeNoteContent(content string) string {
+	user, _ := s.db.GetActiveUser()
+	if user != nil && user.Host != "" {
+		return utils.FixNoteContent(content, user.Host, "/api2/file/getImage")
+	}
+	return content
 }
 
 func (s *SyncService) downloadContentImages(content string) {

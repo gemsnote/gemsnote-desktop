@@ -20,3 +20,19 @@ func TestNoteIsStarPresence(t *testing.T) {
 		t.Fatal("missing IsStar reported as present")
 	}
 }
+
+func TestNoteContentPresenceDistinguishesEmptySnapshotBody(t *testing.T) {
+	var withEmpty, withoutContent Note
+	if err := json.Unmarshal([]byte(`{"NoteId":"n","Content":""}`), &withEmpty); err != nil {
+		t.Fatal(err)
+	}
+	if !withEmpty.ContentPresent {
+		t.Fatal("empty snapshot body must still be marked present")
+	}
+	if err := json.Unmarshal([]byte(`{"NoteId":"n"}`), &withoutContent); err != nil {
+		t.Fatal(err)
+	}
+	if withoutContent.ContentPresent {
+		t.Fatal("metadata-only note reported content as present")
+	}
+}

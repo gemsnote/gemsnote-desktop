@@ -340,7 +340,7 @@ func (a *App) ResetSync() map[string]interface{} {
 		return os.RemoveAll(filepath.Join(a.files.GetDataDir(), "shared", accountID))
 	})
 	if err == nil {
-		_, err = a.sync.FullSync()
+		_, err = a.sync.FreshSync()
 	}
 	if err != nil {
 		result["Msg"] = err.Error()

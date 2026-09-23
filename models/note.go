@@ -13,6 +13,7 @@ type Note struct {
 	UserID         string     `json:"UserId"`
 	Title          string     `json:"Title,omitempty"`
 	Content        string     `json:"Content,omitempty"`
+	ContentPresent bool       `json:"-"`
 	Desc           string     `json:"Desc,omitempty"`
 	Abstract       string     `json:"Abstract,omitempty"`
 	ImgSrc         string     `json:"ImgSrc,omitempty"`
@@ -55,6 +56,7 @@ func (n *Note) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	_, n.IsStarPresent = fields["IsStar"]
+	_, n.ContentPresent = fields["Content"]
 	return nil
 }
 

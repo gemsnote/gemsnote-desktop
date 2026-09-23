@@ -45,6 +45,17 @@ func (s *SyncService) emitProgress(stage string, current, total int) {
 }
 
 func (s *SyncService) FullSync() (*models.SyncInfo, error) {
+	return s.fullSync(false)
+}
+
+// FreshSync is used only after the active account cache has been cleared.
+// The API2 snapshot includes note bodies in bounded pages, avoiding one
+// request per note while retaining the normal full-sync merge behavior.
+func (s *SyncService) FreshSync() (*models.SyncInfo, error) {
+	return s.fullSync(true)
+}
+
+func (s *SyncService) fullSync(withContentSnapshot bool) (*models.SyncInfo, error) {
 	s.mu.Lock()
 	if s.isSyncing {
 		s.mu.Unlock()
@@ -99,7 +110,7 @@ func (s *SyncService) FullSync() (*models.SyncInfo, error) {
 	}
 
 	s.emitProgress("notes", 40, 100)
-	if err := s.syncNotes(-1, syncInfo); err != nil {
+	if err := s.syncNotesMode(-1, syncInfo, withContentSnapshot); err != nil {
 		logrus.Errorf("Sync notes error: %v", err)
 		return nil, err
 	}
