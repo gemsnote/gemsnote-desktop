@@ -2,6 +2,7 @@ package webapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/gemsnote/gemsnote/db"
+	"github.com/gemsnote/gemsnote/models"
 	"github.com/gemsnote/gemsnote/service"
 )
 
@@ -25,7 +27,8 @@ type Handler struct {
 	Dist    fs.FS
 	// OnLogin decides how to initialize a successfully authenticated remote
 	// account. hasLocalCache is determined before any login-time sync runs.
-	OnLogin func(hasLocalCache bool) (any, error)
+	OnLogin       func(hasLocalCache bool) (any, error)
+	OnBeforeLogin func()
 	// OnSessionChanged prevents background jobs from outliving a local login
 	// session. It is called for remote and explicitly local accounts.
 	OnSessionChanged func(loggedIn bool)
@@ -39,6 +42,10 @@ type Handler struct {
 	OnSync           func() (any, error)
 	OnFullSync       func() (any, error)
 	OnResetSync      func() (any, error)
+	OnInitialSync    func() (any, error)
+	OnSyncProgress   func() models.SyncProgress
+	OnWaitForImage   func(context.Context, string)
+	OnDownloadStatus func() models.DownloadStatus
 	OnSharedDownload func()
 }
 
@@ -86,11 +93,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // SPA route rendered via index.html fallback.
 func isGetApiPath(path string) bool {
 	for _, prefix := range []string{
+		"/api2/desktop/about",
 		"/api2/bootstrap",
 		"/api2/web/bootstrap",
 		"/api2/web/sync",
 		"/api2/web/fullSync",
 		"/api2/web/resetSync",
+		"/api2/web/syncProgress",
+		"/api2/web/downloadStatus",
 		"/api2/captcha/",
 		"/captcha/",
 		"/api2/attach/download",
@@ -126,6 +136,8 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) bool {
 	}
 
 	switch {
+	case path == "/api2/desktop/about" && method == http.MethodGet:
+		h.writeJSON(w, DesktopAbout(h.Version))
 	case path == "/api2/bootstrap" && method == http.MethodGet:
 		h.bootstrap(w)
 	case path == "/api2/notes":
@@ -158,12 +170,34 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) bool {
 		h.syncNow(w, h.OnSync)
 	case path == "/api2/web/fullSync" && method == http.MethodPost:
 		h.syncNow(w, h.OnFullSync)
+	case path == "/api2/web/syncProgress" && method == http.MethodGet:
+		w.Header().Set("Cache-Control", "no-store")
+		if h.requireUser(w) != nil {
+			if h.OnSyncProgress == nil {
+				h.writeJSON(w, models.SyncProgress{})
+			} else {
+				h.writeJSON(w, h.OnSyncProgress())
+			}
+		}
 	case path == "/api2/web/resetSync" && method == http.MethodPost:
+		if h.form(r, "initial") == "true" {
+			h.syncNow(w, h.OnInitialSync)
+			return true
+		}
 		if h.form(r, "confirm") != "true" {
 			h.fail(w, "confirmationRequired")
 			return true
 		}
 		h.syncNow(w, h.OnResetSync)
+	case path == "/api2/web/downloadStatus" && method == http.MethodGet:
+		w.Header().Set("Cache-Control", "no-store")
+		if h.requireUser(w) != nil {
+			if h.OnDownloadStatus == nil {
+				h.writeJSON(w, models.DownloadStatus{})
+			} else {
+				h.writeJSON(w, h.OnDownloadStatus())
+			}
+		}
 	case path == "/api2/web/logout" && method == http.MethodPost:
 		h.logoutJSON(w, r)
 	case path == "/api2/logout" && method == http.MethodPost:

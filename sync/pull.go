@@ -22,6 +22,7 @@ func (s *SyncService) syncNotebooks(afterUsn int64, syncInfo *models.SyncInfo) e
 
 	currentUsn := afterUsn
 	remoteIDs := make(map[string]bool)
+	completed := 0
 
 	for {
 		notebooks, err := s.api.GetSyncNotebooks(currentUsn, s.maxEntry)
@@ -45,6 +46,8 @@ func (s *SyncService) syncNotebooks(afterUsn int64, syncInfo *models.SyncInfo) e
 			if err := s.processNotebookSync(nb, syncInfo); err != nil {
 				return fmt.Errorf("process remote notebook %s: %w", nb.NotebookID, err)
 			}
+			completed++
+			s.emitItemProgress("notebooks", completed, 0, 20)
 		}
 
 		if len(notebooks) > 0 {
@@ -143,12 +146,14 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 
 	currentUsn := afterUsn
 	remoteIDs := make(map[string]bool)
+	completed := 0
 
 	for {
 		pageSize := s.maxEntry
 		if withContentSnapshot && pageSize > freshSyncPageSize {
 			pageSize = freshSyncPageSize
 		}
+		pageStarted := time.Now()
 		var notes []*models.Note
 		var err error
 		if withContentSnapshot {
@@ -159,6 +164,7 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 		if err != nil {
 			return err
 		}
+		downloadElapsed := time.Since(pageStarted)
 
 		if len(notes) == 0 {
 			break
@@ -174,6 +180,13 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 			if err := s.processNoteSync(note, syncInfo); err != nil {
 				return fmt.Errorf("process remote note %s: %w", note.NoteID, err)
 			}
+			if withContentSnapshot {
+				if err := s.queueSnapshotFiles(note); err != nil {
+					return err
+				}
+			}
+			completed++
+			s.emitItemProgress("notes", completed, 0, 40)
 		}
 
 		if len(notes) > 0 {
@@ -182,6 +195,7 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 				return err
 			}
 		}
+		logrus.Infof("Note sync page: count=%d completed=%d download=%s local=%s", len(notes), completed, downloadElapsed.Round(time.Millisecond), (time.Since(pageStarted) - downloadElapsed).Round(time.Millisecond))
 
 		if len(notes) < pageSize {
 			break
@@ -253,18 +267,18 @@ func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.
 	}
 
 	if localNote == nil {
+		if serverNote.ContentPresent {
+			copyNote := *serverNote
+			copyNote.Content = s.localizeNoteContent(serverNote.Content)
+			serverNote = &copyNote
+		}
 		created, err := s.db.AddNoteForce(serverNote)
 		if err != nil {
 			return err
 		}
 		if created != nil {
 			syncInfo.Note.Adds = append(syncInfo.Note.Adds, created.NoteID)
-			if serverNote.ContentPresent {
-				content := s.localizeNoteContent(serverNote.Content)
-				if err := s.db.UpdateNoteContent(created.NoteID, content); err != nil {
-					return err
-				}
-			} else {
+			if !serverNote.ContentPresent {
 				if err := s.syncNoteContentAndFiles(created); err != nil {
 					return err
 				}
@@ -488,7 +502,7 @@ func (s *SyncService) syncImagesAndAttachs(syncInfo *models.SyncInfo) error {
 			}
 		}
 
-		s.emitProgress(fmt.Sprintf("note %d/%d", i+1, len(notes)), i+1, len(notes))
+		s.emitItemProgress("images", i+1, len(notes), 85+14*(i+1)/len(notes))
 	}
 
 	return nil
@@ -498,6 +512,7 @@ func (s *SyncService) syncTags(afterUsn int64, syncInfo *models.SyncInfo) error 
 	logrus.Info("Syncing tags...")
 
 	currentUsn := afterUsn
+	completed := 0
 
 	for {
 		tags, err := s.api.GetSyncTags(currentUsn, s.maxEntry)
@@ -512,7 +527,10 @@ func (s *SyncService) syncTags(afterUsn int64, syncInfo *models.SyncInfo) error 
 		for _, tag := range tags {
 			if err := s.processTagSync(tag, syncInfo); err != nil {
 				logrus.Errorf("Process tag error: %v", err)
+				continue
 			}
+			completed++
+			s.emitItemProgress("tags", completed, 0, 60)
 		}
 
 		if len(tags) > 0 {

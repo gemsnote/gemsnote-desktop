@@ -47,6 +47,18 @@ wails dev
 - 同步使用服务端 ID，不能把本地 SQLite 自增键当作服务端资源 ID。
 - 本地 SQLite 数据库位于平台默认 Gemsnote 数据目录，结构迁移由 `db/migrations.sql` 管理。
 
+“关于”通过本地 `GET /api2/desktop/about` 获取当前客户端的版本、平台、架构和 Go 运行时，不依赖远程服务端或 `window.go` 绑定。该端点只属于 desktop bridge。
+
+登录后按用户 ID 检查实际 SQLite 缓存（含部分下载和共享内容），不能把读取失败、用户名或保存的服务器地址变化当作“没有缓存”。已有缓存时保持自动同步暂停，由用户选择“暂不同步”或确认“重新同步”；无缓存时可调用本地 `POST /api2/web/resetSync` 并传入 `initial=true`，后端仍须在同步锁内重新检查缓存为空，否则返回 `confirmationRequired`。只有用户明确确认的重置请求才传 `confirm=true`。
+
+同步进度同时通过 Wails `sync-progress` 事件和本地 `GET /api2/web/syncProgress` 提供。前端在进度窗打开时每 500ms 查询一次本地快照，不请求远程服务端；请求完成后停止。字段 `Running`、`Mode`、`Stage` 表示状态，`Current`/`Total` 表示当前阶段完成数量（`Total=0` 表示未知总量），`Percent` 是粗粒度流程进度。未知总量时显示等待动画与已完成数量，不伪造精确百分比。确认窗、进度窗和最终成功/失败以发起同步的 HTTP 请求结果为准。
+
+重新同步在笔记本、正文和标签落库后返回成功并关闭进度窗；图片、附件使用去重后的后台队列，最多 4 路并行下载，SQLite 落库串行进行，头像也在后台刷新。后台任务持有启动时的账号和服务器凭据，不使用前台可变的 API 客户端。注销、切换账号、再次重置和退出应用时取消并等待后台写入停止，避免旧任务污染新缓存。下载状态由本地 `GET /api2/web/downloadStatus` 返回，不能计入笔记的 dirty/未同步状态；失败仅记录后台日志，不能阻塞已完成的笔记同步。当前后台队列在进程内运行，关闭应用会取消未完成下载。
+
+排查慢同步时查看 `API GET ... elapsed/bytes`、`Note sync page ... download/local` 和 `Background media downloads ...` 日志，以区分正文网络耗时、SQLite 写入耗时及图片附件下载；日志不输出认证 token 或笔记正文。
+
+共享前端的文件选择按钮、确认/输入对话框和表单校验提示使用应用内语言。请复用 `FilePicker.vue` 和 `dialogs.ts`，不要直接使用原生 `alert/confirm/prompt`。系统文件选择窗口中的目录名称、系统按钮等由操作系统负责本地化；Wails v2 没有跨平台的运行时语言切换选项，应用语言不能覆盖这些系统界面。
+
 ## 测试
 
 ```bash
@@ -59,6 +71,8 @@ go test ./...
 npm ci
 npm test -- --run
 npm run build
+npm run test:auth-sync
+npm run test:desktop-ui
 ```
 
 涉及同步、API2 或本地 bridge 的改动，应同时运行对应的 `sync`、`webapi`、`sharedsync` 测试，并检查离线启动、登录、完全同步、增量同步、头像和附件。

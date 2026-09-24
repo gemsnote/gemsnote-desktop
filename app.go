@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	goruntime "runtime"
 	"strings"
 	stdsync "sync"
 	"sync/atomic"
@@ -23,24 +22,27 @@ import (
 	"github.com/gemsnote/gemsnote/sharedsync"
 	"github.com/gemsnote/gemsnote/sync"
 	"github.com/gemsnote/gemsnote/utils"
+	"github.com/gemsnote/gemsnote/webapi"
 )
 
 type App struct {
-	ctx         context.Context
-	db          *db.Database
-	api         *api.Client
-	sync        *sync.SyncService
-	syncRunMu   stdsync.Mutex
-	sessionLive atomic.Bool
-	sharedSync  *sharedsync.Service
-	files       *service.FileService
-	webCallback WebCallbackFunc
+	ctx            context.Context
+	db             *db.Database
+	api            *api.Client
+	sync           *sync.SyncService
+	syncRunMu      stdsync.Mutex
+	syncProgressMu stdsync.RWMutex
+	syncProgress   models.SyncProgress
+	sessionLive    atomic.Bool
+	sharedSync     *sharedsync.Service
+	files          *service.FileService
+	webCallback    WebCallbackFunc
 }
 
 func NewApp(database *db.Database) *App {
 	files := service.NewFileService(database)
 	client := api.NewClient()
-	return &App{
+	app := &App{
 		db:   database,
 		api:  client,
 		sync: sync.NewSyncService(database, client),
@@ -49,11 +51,15 @@ func NewApp(database *db.Database) *App {
 		sharedSync: sharedsync.New(database, api.NewClient(), files),
 		files:      files,
 	}
+	app.SetSyncProgressCallback()
+	app.sync.BackgroundProfileRefresh = func(ctx context.Context, user models.User) {
+		webapi.RefreshAccountProfile(ctx, user, database, files)
+	}
+	return app
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
-	a.sync = sync.NewSyncService(a.db, a.api)
 	a.SetSyncProgressCallback()
 	a.restoreSession()
 	if user, _ := a.db.GetActiveUser(); user != nil && user.Token != "" {
@@ -63,6 +69,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	a.sync.StopBackgroundDownloads()
 	a.saveCurrentState()
 	a.db.Close()
 }
@@ -107,6 +114,7 @@ func (a *App) GetAttachDir() string {
 // ==================== User Operations ====================
 
 func (a *App) Login(email, password, host string) map[string]interface{} {
+	a.sync.StopBackgroundDownloads()
 	resp, err := a.api.Auth(email, password, host)
 	if err != nil {
 		return map[string]interface{}{"Ok": false, "Msg": err.Error()}
@@ -125,21 +133,32 @@ func (a *App) Login(email, password, host string) map[string]interface{} {
 		IsActive: true,
 	}
 
-	existing, _ := a.db.GetUser(user.ID)
-	hasLocalCache := false
-	if existing != nil && db.SharedAccountID(existing.Host, user.ID) == db.SharedAccountID(host, user.ID) {
-		hasLocalCache, _ = a.db.HasAccountCache(user.ID)
+	hasLocalCache, err := a.db.HasAccountCache(user.ID)
+	if err != nil {
+		return map[string]interface{}{"Ok": false, "Msg": fmt.Sprintf("read local account cache: %v", err)}
+	}
+	existing, err := a.db.GetUser(user.ID)
+	if err != nil {
+		return map[string]interface{}{"Ok": false, "Msg": err.Error()}
 	}
 	if existing != nil {
 		user.LastSyncUsn = existing.LastSyncUsn
 		user.NotebookUsn = existing.NotebookUsn
 		user.NoteUsn = existing.NoteUsn
 		user.TagUsn = existing.TagUsn
-		_ = a.db.UpdateUser(user)
+		err = a.db.UpdateUser(user)
 	} else {
-		_ = a.db.InsertUser(user)
+		err = a.db.InsertUser(user)
 	}
-	_ = a.db.SwitchUser(user.ID)
+	if err != nil {
+		return map[string]interface{}{"Ok": false, "Msg": err.Error()}
+	}
+	if err := a.db.SetConfig("sync:paused:"+user.ID, "true"); err != nil {
+		return map[string]interface{}{"Ok": false, "Msg": err.Error()}
+	}
+	if err := a.db.SwitchUser(user.ID); err != nil {
+		return map[string]interface{}{"Ok": false, "Msg": err.Error()}
+	}
 	a.db.SetCurrentUser(user.ID)
 	a.api.SetToken(resp.Token)
 	a.api.SetHost(host)
@@ -158,11 +177,7 @@ func (a *App) Login(email, password, host string) map[string]interface{} {
 		result["SyncChoiceRequired"] = true
 	} else {
 		a.SetAutoSyncPaused(true)
-		if reset := a.ResetSync(); reset["Ok"] == true {
-			result["ResetSynced"] = true
-		} else {
-			result["InitialSyncError"] = reset["Msg"]
-		}
+		result["ResetSyncRequired"] = true
 	}
 	if serverVersion != nil {
 		result["Server"] = serverVersion.Server
@@ -198,6 +213,7 @@ func (a *App) Logout() map[string]interface{} {
 			return map[string]interface{}{"Ok": false, "Msg": "syncFailed"}
 		}
 	}
+	a.sync.StopBackgroundDownloads()
 	a.api.Logout()
 	a.api.SetToken("")
 	a.api.SetHost("")
@@ -228,6 +244,7 @@ func (a *App) GetAllUsers() []map[string]interface{} {
 }
 
 func (a *App) SwitchUser(userID string) {
+	a.sync.StopBackgroundDownloads()
 	a.files.SwitchUser(userID)
 	user, _ := a.db.GetUser(userID)
 	if user != nil {
@@ -242,6 +259,7 @@ func (a *App) SwitchUser(userID string) {
 }
 
 func (a *App) DeleteUser(userID string) {
+	a.sync.StopBackgroundDownloads()
 	a.files.DeleteUser(userID)
 }
 
@@ -313,14 +331,37 @@ func (a *App) FullSyncForce() map[string]interface{} {
 // the active account's cache and does not upload pending local edits. The UI
 // must obtain explicit confirmation before calling the local bridge endpoint.
 func (a *App) ResetSync() map[string]interface{} {
+	return a.resetSync(false)
+}
+
+// InitialSync may be invoked without confirmation only for an empty account.
+// Recheck under the sync lock, directly before the destructive reset.
+func (a *App) InitialSync() map[string]interface{} {
+	return a.resetSync(true)
+}
+
+func (a *App) resetSync(requireEmpty bool) map[string]interface{} {
 	result := map[string]interface{}{"Ok": false, "Full": true, "Reset": true}
 	a.syncRunMu.Lock()
 	defer a.syncRunMu.Unlock()
+	a.beginSyncProgress("reset")
+	defer a.finishSyncProgress()
 	user, err := a.db.GetActiveUser()
 	if err != nil || user == nil || user.IsLocal || user.Host == "" || user.Token == "" || !utils.IsValidObjectId(user.ID) {
 		result["Msg"] = "resetSyncUnavailable"
 		a.emitSyncFinished(result)
 		return result
+	}
+	if requireEmpty {
+		cached, err := a.db.HasAccountCache(user.ID)
+		if err != nil || cached {
+			result["Msg"] = "confirmationRequired"
+			if err != nil {
+				result["Msg"] = fmt.Sprintf("read local account cache: %v", err)
+			}
+			a.emitSyncFinished(result)
+			return result
+		}
 	}
 	a.api.SetHost(user.Host)
 	a.api.SetToken(user.Token)
@@ -330,6 +371,9 @@ func (a *App) ResetSync() map[string]interface{} {
 		return result
 	}
 	accountID := db.SharedAccountID(user.Host, user.ID)
+	// No previous account download may write after the reset clears rows/files.
+	a.sync.StopBackgroundDownloads()
+	a.recordSyncProgress(models.SyncProgress{Stage: "resetting"})
 	err = a.sharedSync.RunExclusive(func() error {
 		if err := a.db.ResetAccountCache(user.ID, accountID); err != nil {
 			return err
@@ -373,7 +417,12 @@ func (a *App) IsAutoSyncPaused() bool {
 	return value == "true"
 }
 
-func (a *App) SetSessionLive(live bool) { a.sessionLive.Store(live) }
+func (a *App) SetSessionLive(live bool) {
+	a.sessionLive.Store(live)
+	if !live {
+		a.sync.StopBackgroundDownloads()
+	}
+}
 
 func (a *App) CanAutoSync() bool {
 	return a.sessionLive.Load() && !a.IsAutoSyncPaused()
@@ -944,6 +993,8 @@ func (a *App) IncrSync() map[string]interface{} {
 func (a *App) runFullSync(force bool) error {
 	a.syncRunMu.Lock()
 	defer a.syncRunMu.Unlock()
+	a.beginSyncProgress("full")
+	defer a.finishSyncProgress()
 	if force {
 		return a.sync.ForceFullSync()
 	}
@@ -954,6 +1005,8 @@ func (a *App) runFullSync(force bool) error {
 func (a *App) runFullSyncInfo() (*models.SyncInfo, error) {
 	a.syncRunMu.Lock()
 	defer a.syncRunMu.Unlock()
+	a.beginSyncProgress("full")
+	defer a.finishSyncProgress()
 	return a.sync.FullSync()
 }
 
@@ -1245,19 +1298,14 @@ func (a *App) StopSync() {
 }
 
 func (a *App) SetSyncProgressCallback() {
-	a.sync.SetProgressCallback(func(stage string, current, total int) {
+	a.sync.SetProgressCallback(func(progress models.SyncProgress) {
+		progress = a.recordSyncProgress(progress)
 		if a.ctx != nil {
-			runtime.EventsEmit(a.ctx, "sync-progress", map[string]interface{}{
-				"Stage":   stage,
-				"Current": current,
-				"Total":   total,
-			})
+			runtime.EventsEmit(a.ctx, "sync-progress", progress)
 		}
 		if a.webCallback != nil {
 			a.webCallback("syncProgress", map[string]interface{}{
-				"Stage":   stage,
-				"Current": current,
-				"Total":   total,
+				"Stage": progress.Stage, "Current": progress.Current, "Total": progress.Total, "Percent": progress.Percent,
 			})
 		}
 	})
@@ -1740,13 +1788,7 @@ func (a *App) GetVersion() string {
 }
 
 func (a *App) GetAboutInfo() map[string]string {
-	return map[string]string{
-		"Name":     "Gemsnote",
-		"Version":  AppVersion,
-		"Platform": goruntime.GOOS,
-		"Arch":     goruntime.GOARCH,
-		"Runtime":  goruntime.Version(),
-	}
+	return webapi.DesktopAbout(AppVersion)
 }
 
 // 16. Local PDF generation using gopdf

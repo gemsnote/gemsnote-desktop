@@ -71,6 +71,27 @@ func TestHasAccountCacheIgnoresUserRowAndDetectsContent(t *testing.T) {
 	}
 }
 
+func TestHasAccountCacheIncludesSharedOnlyData(t *testing.T) {
+	database, err := NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	accountID := SharedAccountID("https://example.test", "user1")
+	if err := database.EnsureSharedAccount(accountID, "https://example.test", "user1", 1, "supported"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.PublishSharedSnapshot(accountID, []models.SharedSnapshotItem{{Kind: "notebook", Notebook: &models.SharedNotebook{NotebookID: "shared-book", OwnerUserID: "other", Title: "Shared"}}}, 1); err != nil {
+		t.Fatal(err)
+	}
+	if cached, err := database.HasAccountCache("user1"); err != nil || !cached {
+		t.Fatalf("shared-only content must count as cache: cached=%v err=%v", cached, err)
+	}
+	if cached, err := database.HasAccountCache("other"); err != nil || cached {
+		t.Fatalf("another account's data must not count as cache: cached=%v err=%v", cached, err)
+	}
+}
+
 func TestUpdateLastSyncUsn(t *testing.T) {
 	database, err := NewInMemory()
 	if err != nil {

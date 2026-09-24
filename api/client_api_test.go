@@ -5,11 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gemsnote/gemsnote/models"
+	"github.com/go-resty/resty/v2"
 )
 
 func TestNoteUploadsUseDedicatedLongTimeout(t *testing.T) {
@@ -22,6 +24,33 @@ func TestNoteUploadsUseDedicatedLongTimeout(t *testing.T) {
 	}
 	if got := client.contentClient.GetClient().Timeout; got != noteContentTimeout {
 		t.Fatalf("note content timeout = %v, want %v", got, noteContentTimeout)
+	}
+	for name, restyClient := range map[string]*resty.Client{
+		"default": client.client, "upload": client.uploadClient, "content": client.contentClient,
+	} {
+		transport, ok := restyClient.GetClient().Transport.(*http.Transport)
+		if !ok || transport.TLSHandshakeTimeout != tlsHandshakeTimeout {
+			t.Fatalf("%s TLS handshake timeout = %v, want %v", name, transport.TLSHandshakeTimeout, tlsHandshakeTimeout)
+		}
+	}
+}
+
+func TestGetLastSyncStateRetriesTransientFailure(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls < 3 {
+			http.Error(w, "temporary", http.StatusServiceUnavailable)
+			return
+		}
+		w.Write([]byte(`{"Ok":true,"LastSyncUsn":7,"LastSyncTime":0}`))
+	}))
+	defer server.Close()
+	client := NewClient()
+	client.SetHost(server.URL)
+	state, err := client.GetLastSyncState()
+	if err != nil || state.LastSyncUsn != 7 || calls != 3 {
+		t.Fatalf("state=%+v calls=%d err=%v", state, calls, err)
 	}
 }
 
@@ -69,6 +98,29 @@ func TestClientErrorsRedactToken(t *testing.T) {
 	err := client.redactError(errors.New(`Post "https://example.test/api2/note/addNote?token=secret-token": timeout`))
 	if strings.Contains(err.Error(), "secret-token") || !strings.Contains(err.Error(), "[redacted]") {
 		t.Fatalf("token was not redacted: %v", err)
+	}
+}
+
+func TestImageDownloadDoesNotCacheErrorPages(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusOK} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				w.Write([]byte(`{"Ok":false,"Msg":"notFound"}`))
+			}))
+			defer server.Close()
+			client := NewClient()
+			client.SetHost(server.URL)
+			dir := t.TempDir()
+			if path, err := client.GetImage("missing", dir); err == nil || path != "" {
+				t.Fatalf("error response saved as image: %q %v", path, err)
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("download left invalid cache files: %v %v", entries, err)
+			}
+		})
 	}
 }
 

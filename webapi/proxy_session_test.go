@@ -318,9 +318,12 @@ func TestRemoteLoginReportsWhetherAccountCacheExists(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		withCache bool
+		savedHost string
 	}{
 		{name: "fresh account", withCache: false},
 		{name: "cached account", withCache: true},
+		{name: "cache with missing saved host", withCache: true, savedHost: "missing"},
+		{name: "cache with changed server address", withCache: true, savedHost: "https://old-address.example"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			authCalls, profileCalls := 0, 0
@@ -341,7 +344,14 @@ func TestRemoteLoginReportsWhetherAccountCacheExists(t *testing.T) {
 			defer server.Close()
 			e := newTestEnv(t)
 			if tc.withCache {
-				if err := e.db.InsertUser(&models.User{ID: "user1", Username: "tester", Host: server.URL}); err != nil {
+				host := server.URL
+				if tc.savedHost != "" {
+					host = tc.savedHost
+				}
+				if host == "missing" {
+					host = ""
+				}
+				if err := e.db.InsertUser(&models.User{ID: "user1", Username: "previous-name", Host: host}); err != nil {
 					t.Fatal(err)
 				}
 				if err := e.db.InsertNotebook(&models.Notebook{ID: "book1", NotebookID: "book1", UserID: "user1", Title: "Cached"}); err != nil {
@@ -366,7 +376,47 @@ func TestRemoteLoginReportsWhetherAccountCacheExists(t *testing.T) {
 			if authCalls != 1 || profileCalls != 0 {
 				t.Fatalf("login performed redundant requests: auth=%d profile=%d", authCalls, profileCalls)
 			}
+			if paused, err := e.db.GetConfig("sync:paused:user1"); err != nil || paused != "true" {
+				t.Fatalf("auto sync must remain paused until the user decides: paused=%s err=%v", paused, err)
+			}
 		})
+	}
+}
+
+func TestLoginCacheReadFailureDoesNotStartSync(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api2/auth/login" {
+			t.Errorf("unexpected login-time request %s", r.URL.Path)
+		}
+		w.Write([]byte(api2LoginResponse("user1")))
+	}))
+	defer server.Close()
+	e := newTestEnv(t)
+	e.handler.Proxy = NewServerProxy(e.db, e.handler.Files)
+	e.handler.Proxy.SetHost(server.URL)
+	tx, err := e.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Simulate a cache/schema read error only inside the test's memory DB.
+	if _, err := tx.Exec("DROP TABLE images"); err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	e.handler.OnLogin = func(bool) (any, error) {
+		t.Error("failed cache detection must not call the initial-sync hook")
+		return nil, nil
+	}
+	var result map[string]any
+	e.postJSON(t, "/api2/auth/session", url.Values{"email": {"tester"}, "pwd": {"secret"}}, &result)
+	if result["Ok"] != false || result["Msg"] == "" {
+		t.Fatalf("cache read failure was ignored: %v", result)
+	}
+	if user, err := e.db.GetActiveUser(); err != nil || user != nil {
+		t.Fatalf("failed login exposed an active account: %+v, %v", user, err)
 	}
 }
 

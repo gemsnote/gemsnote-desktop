@@ -45,7 +45,11 @@ func TestIncrementalSyncUploadsDirtyDataBeforePulling(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, err := NewSyncService(database, api.NewClient()).IncrSync(); err != nil {
+	syncer := NewSyncService(database, api.NewClient())
+	syncer.SetProgressCallback(func(progress models.SyncProgress) {
+		t.Errorf("incremental sync must not open the full-sync modal: %+v", progress)
+	})
+	if _, err := syncer.IncrSync(); err != nil {
 		t.Fatal(err)
 	}
 	if len(order) < 2 || order[0] != "push" || order[1] != "pull" {
@@ -66,7 +70,19 @@ func TestFreshSyncUsesPagedContentSnapshot(t *testing.T) {
 			if got := r.URL.Query().Get("maxEntry"); got != "20" {
 				t.Errorf("snapshot maxEntry=%q, want 20", got)
 			}
-			w.Write([]byte(`[{"NoteId":"remote-note","NotebookId":"remote-book","UserId":"user1","Title":"Note","Content":"snapshot body","Usn":2}]`))
+			var notes []map[string]any
+			start, end := 0, 20
+			if r.URL.Query().Get("afterUsn") != "-1" {
+				start, end = 20, 21
+			}
+			for i := start; i < end; i++ {
+				id := fmt.Sprintf("remote-note-%d", i)
+				if i == 0 {
+					id = "remote-note"
+				}
+				notes = append(notes, map[string]any{"NoteId": id, "NotebookId": "remote-book", "UserId": "user1", "Title": "Note", "Content": "snapshot body", "Usn": i + 2})
+			}
+			json.NewEncoder(w).Encode(notes)
 		case "/api2/note/getNoteContent":
 			singleContentCalls++
 			w.Write([]byte(`{"Ok":true,"Content":"unexpected"}`))
@@ -86,15 +102,33 @@ func TestFreshSyncUsesPagedContentSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	database.SetCurrentUser("user1")
-	if _, err := NewSyncService(database, api.NewClient()).FreshSync(); err != nil {
+	syncer := NewSyncService(database, api.NewClient())
+	var progressEvents []models.SyncProgress
+	syncer.SetProgressCallback(func(progress models.SyncProgress) { progressEvents = append(progressEvents, progress) })
+	if _, err := syncer.FreshSync(); err != nil {
 		t.Fatal(err)
 	}
 	note, err := database.GetNoteByServerID("remote-note")
 	if err != nil || note == nil || note.Content != "snapshot body" || note.InitSync {
 		t.Fatalf("snapshot note not cached: note=%+v err=%v", note, err)
 	}
-	if contentCalls != 1 || singleContentCalls != 0 {
+	if contentCalls != 2 || singleContentCalls != 0 {
 		t.Fatalf("snapshot calls=%d single content calls=%d", contentCalls, singleContentCalls)
+	}
+	completed := 0
+	for _, progress := range progressEvents {
+		if progress.Stage == "notes" && progress.Current > 0 {
+			completed++
+			if progress.Current != completed || progress.Total != 0 {
+				t.Fatalf("per-note progress must span pages without an invented total: %+v", progress)
+			}
+		}
+		if progress.Stage != "done" && progress.Percent >= 100 {
+			t.Fatalf("sync reached 100%% before completion: %+v", progress)
+		}
+	}
+	if completed != 21 || progressEvents[len(progressEvents)-1].Stage != "done" {
+		t.Fatalf("incomplete progress: %d notes, events=%+v", completed, progressEvents)
 	}
 }
 

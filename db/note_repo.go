@@ -382,7 +382,9 @@ func (d *Database) AddNoteForce(note *models.Note) (*models.Note, error) {
 	note.IsDirty = false
 	note.LocalIsNew = false
 	note.LocalIsDelete = false
-	note.InitSync = true
+	// A snapshot already includes its body (including a valid empty body).
+	// Persist it once rather than rewriting large content in a second commit.
+	note.InitSync = !note.ContentPresent
 
 	err := d.InsertNote(note)
 	if err != nil {

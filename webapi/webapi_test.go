@@ -204,9 +204,54 @@ func TestResetSyncRequiresConfirmation(t *testing.T) {
 	if called || !strings.Contains(string(body), "confirmationRequired") {
 		t.Fatalf("POST without confirmation must not reset cache: %s", body)
 	}
+	initialCalled := false
+	e.handler.OnInitialSync = func() (any, error) {
+		initialCalled = true
+		return map[string]any{"Ok": false, "Msg": "confirmationRequired"}, nil
+	}
+	_, body = e.post(t, "/api2/web/resetSync", url.Values{"initial": {"true"}})
+	if !initialCalled || called || !strings.Contains(string(body), "confirmationRequired") {
+		t.Fatalf("initial request must use the guarded hook, never the confirmed reset: %s", body)
+	}
 	_, body = e.post(t, "/api2/web/resetSync", url.Values{"confirm": {"true"}})
 	if !called || !strings.Contains(string(body), `"Reset":true`) {
 		t.Fatalf("confirmed POST must invoke reset: %s", body)
+	}
+}
+
+func TestSyncProgressIsLocalAuthenticatedJSON(t *testing.T) {
+	e := newTestEnv(t)
+	_, body := e.get(t, "/api2/web/syncProgress")
+	if !strings.Contains(string(body), "NOTLOGIN") {
+		t.Fatalf("guest progress should require a session: %s", body)
+	}
+	e.login(t)
+	want := models.SyncProgress{Running: true, Mode: "reset", Stage: "notes", Percent: 40, Current: 21}
+	e.handler.OnSyncProgress = func() models.SyncProgress { return want }
+	_, body = e.get(t, "/api2/web/syncProgress")
+	var got models.SyncProgress
+	if err := json.Unmarshal(body, &got); err != nil || got != want {
+		t.Fatalf("progress is not the current local JSON snapshot: %s, %v", body, err)
+	}
+}
+
+func TestBackgroundDownloadsDoNotCountAsPendingNoteChanges(t *testing.T) {
+	e := newTestEnv(t)
+	e.handler.OnDownloadStatus = func() models.DownloadStatus { return models.DownloadStatus{Running: true, Completed: 2, Total: 12} }
+	_, body := e.get(t, "/api2/web/downloadStatus")
+	if !strings.Contains(string(body), "NOTLOGIN") {
+		t.Fatalf("guest media status: %s", body)
+	}
+	e.login(t)
+	_, body = e.get(t, "/api2/web/downloadStatus")
+	var status models.DownloadStatus
+	if err := json.Unmarshal(body, &status); err != nil || !status.Running || status.Completed != 2 {
+		t.Fatalf("bad media status: %s %v", body, err)
+	}
+	_, body = e.get(t, "/api2/bootstrap")
+	var boot map[string]any
+	if err := json.Unmarshal(body, &boot); err != nil || boot["PendingChanges"] != false {
+		t.Fatalf("downloads marked local notes dirty: %s %v", body, err)
 	}
 }
 
@@ -682,6 +727,9 @@ func TestOfflineRemoteAccountBootstrapUsesCache(t *testing.T) {
 	_, body := e.get(t, "/api2/web/bootstrap")
 	if calls != 0 || !strings.Contains(string(body), `"IsAdmin":true`) {
 		t.Fatalf("bootstrap contacted server or lost cached admin: calls=%d body=%s", calls, body)
+	}
+	if !strings.Contains(string(body), `"Host":"https://offline.example"`) {
+		t.Fatalf("bootstrap lost active account server address: %s", body)
 	}
 	_, body = e.post(t, "/api2/web/groups", url.Values{})
 	if calls != 1 || !strings.Contains(string(body), `"Msg":"offline"`) {

@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -18,11 +19,18 @@ type SyncService struct {
 	files    *service.FileService
 	maxEntry int
 
-	mu            sync.Mutex
-	isSyncing     bool
-	needSyncAgain bool
-	retryCount    int
-	progressCb    func(stage string, current, total int)
+	mu                       sync.Mutex
+	isSyncing                bool
+	needSyncAgain            bool
+	retryCount               int
+	progressCb               func(models.SyncProgress)
+	fullProgress             bool // Only full/reset sync opens the modal progress UI.
+	snapshotFiles            map[string]snapshotFile
+	phaseStarted             time.Time
+	phase                    string
+	downloadMu               sync.Mutex
+	downloads                *snapshotDownloads
+	BackgroundProfileRefresh func(context.Context, models.User)
 }
 
 func NewSyncService(database *db.Database, client *api.Client) *SyncService {
@@ -34,13 +42,23 @@ func NewSyncService(database *db.Database, client *api.Client) *SyncService {
 	}
 }
 
-func (s *SyncService) SetProgressCallback(cb func(stage string, current, total int)) {
+func (s *SyncService) SetProgressCallback(cb func(models.SyncProgress)) {
 	s.progressCb = cb
 }
 
 func (s *SyncService) emitProgress(stage string, current, total int) {
-	if s.progressCb != nil {
-		s.progressCb(stage, current, total)
+	if s.fullProgress {
+		if s.phase != "" {
+			logrus.Infof("Sync phase %s: elapsed=%s", s.phase, time.Since(s.phaseStarted).Round(time.Millisecond))
+		}
+		s.phase, s.phaseStarted = stage, time.Now()
+	}
+	s.emitItemProgress(stage, 0, 0, current*100/total)
+}
+
+func (s *SyncService) emitItemProgress(stage string, current, total, percent int) {
+	if s.progressCb != nil && s.fullProgress {
+		s.progressCb(models.SyncProgress{Stage: stage, Current: current, Total: total, Percent: percent})
 	}
 }
 
@@ -64,15 +82,26 @@ func (s *SyncService) fullSync(withContentSnapshot bool) (*models.SyncInfo, erro
 	s.isSyncing = true
 	s.needSyncAgain = false
 	s.retryCount = 0
+	s.fullProgress = true
 	s.mu.Unlock()
 
 	defer func() {
 		s.mu.Lock()
 		s.isSyncing = false
+		s.fullProgress = false
 		s.mu.Unlock()
 	}()
 
 	logrus.Info("Starting full sync...")
+	started := time.Now()
+	defer func() {
+		logrus.Infof("Full sync finished: snapshot=%t last_phase=%s elapsed=%s", withContentSnapshot, s.phase, time.Since(started).Round(time.Millisecond))
+		s.phase = ""
+	}()
+	if withContentSnapshot {
+		s.snapshotFiles = make(map[string]snapshotFile)
+		defer func() { s.snapshotFiles = nil }()
+	}
 	s.emitProgress("start", 0, 100)
 
 	syncInfo := models.NewSyncInfo()
@@ -130,10 +159,12 @@ func (s *SyncService) fullSync(withContentSnapshot bool) (*models.SyncInfo, erro
 		return nil, err
 	}
 
-	s.emitProgress("images", 85, 100)
-	if err := s.syncImagesAndAttachs(syncInfo); err != nil {
-		logrus.Errorf("Sync images/attachs error: %v", err)
-		return nil, err
+	if !withContentSnapshot {
+		s.emitProgress("images", 85, 100)
+		if err := s.syncImagesAndAttachs(syncInfo); err != nil {
+			logrus.Errorf("Sync images/attachs error: %v", err)
+			return nil, err
+		}
 	}
 	if merged, err := s.db.CountVisibleNotes(user.ID); err == nil {
 		logrus.Infof("Full sync merged notes available locally: %d", merged)
@@ -147,6 +178,9 @@ func (s *SyncService) fullSync(withContentSnapshot bool) (*models.SyncInfo, erro
 	}
 
 	s.emitProgress("done", 100, 100)
+	if withContentSnapshot {
+		s.startSnapshotDownloads(user)
+	}
 	logrus.Info("Full sync completed")
 	return syncInfo, nil
 }

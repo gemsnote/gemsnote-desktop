@@ -197,6 +197,7 @@ func (h *Handler) bootstrap(w http.ResponseWriter) {
 	h.writeJSON(w, map[string]any{
 		"Ok":              true,
 		"Desktop":         true,
+		"Host":            user.Host,
 		"User":            map[string]any{"UserId": user.ID, "Username": user.Username, "Email": user.Email, "Logo": h.userLogo(user.ID)},
 		"IsAdmin":         isAdmin,
 		"Notebooks":       h.DB.MapNotebooks(notebooks),
@@ -1047,6 +1048,9 @@ func (h *Handler) serveImage(w http.ResponseWriter, r *http.Request) {
 	}
 	var path string
 	fileID := h.form(r, "fileId")
+	if h.OnWaitForImage != nil {
+		h.OnWaitForImage(r.Context(), fileID)
+	}
 	if user.Host != "" {
 		accountID := db.SharedAccountID(user.Host, user.ID)
 		if h.DB.IsSharedFile(accountID, fileID) {
@@ -1095,13 +1099,20 @@ func (h *Handler) doLogin(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "invalidParams")
 		return
 	}
+	if h.OnBeforeLogin != nil {
+		h.OnBeforeLogin()
+	}
 
 	// A configured server is always authoritative for remote login. Do not
 	// reuse a local user with the same username/email: that would show the old
 	// server's cache without validating credentials against the new server.
 	if h.Proxy != nil && h.Proxy.configured() {
 		if ok, msg := h.Proxy.LoginServer(email, pwd); ok {
-			hasLocalCache := h.adoptServerUser(email, pwd)
+			hasLocalCache, err := h.adoptServerUser(email, pwd)
+			if err != nil {
+				h.fail(w, fmt.Sprintf("read local account cache: %v", err))
+				return
+			}
 			if h.OnSessionChanged != nil {
 				h.OnSessionChanged(true)
 			}
@@ -1149,21 +1160,30 @@ func (h *Handler) doLogin(w http.ResponseWriter, r *http.Request) {
 	h.fail(w, "userNotExist")
 }
 
-func (h *Handler) adoptServerUser(email, pwd string) bool {
+func (h *Handler) adoptServerUser(email, pwd string) (bool, error) {
 	// LoginServer already parsed the authenticated identity and token. Reuse
 	// them instead of issuing user/info plus a second auth/login before the UI
 	// can show its cache decision dialog.
 	serverUser := h.Proxy.remoteUser
 	if serverUser == nil {
-		return false
+		return false, fmt.Errorf("missing authenticated identity")
 	}
-	host, _ := h.DB.GetConfig("host")
-	hasLocalCache := false
-	existing, _ := h.DB.GetUser(serverUser.ID)
+	host, err := h.DB.GetConfig("host")
+	if err != nil {
+		return false, err
+	}
+	// Personal tables are keyed by user ID, so inspect the actual rows a
+	// reset would remove even if the saved host is missing or has changed.
+	// Never interpret a failed cache lookup as an empty account.
+	hasLocalCache, err := h.DB.HasAccountCache(serverUser.ID)
+	if err != nil {
+		return false, err
+	}
+	existing, err := h.DB.GetUser(serverUser.ID)
+	if err != nil {
+		return false, err
+	}
 	if existing != nil {
-		if db.SharedAccountID(existing.Host, serverUser.ID) == db.SharedAccountID(host, serverUser.ID) {
-			hasLocalCache, _ = h.DB.HasAccountCache(serverUser.ID)
-		}
 		if serverUser.Username == "" {
 			serverUser.Username = existing.Username
 		}
@@ -1174,11 +1194,20 @@ func (h *Handler) adoptServerUser(email, pwd string) bool {
 	serverUser.Host = host
 	serverUser.Pwd = utils.MD5WithSalt(pwd, serverUser.ID)
 	if existing != nil {
-		h.DB.UpdateUser(serverUser)
+		err = h.DB.UpdateUser(serverUser)
 	} else {
-		h.DB.InsertUser(serverUser)
+		err = h.DB.InsertUser(serverUser)
 	}
-	h.DB.SwitchUser(serverUser.ID)
+	if err != nil {
+		return false, err
+	}
+	// Pause before making the session visible to the background sync timer.
+	if err := h.DB.SetConfig("sync:paused:"+serverUser.ID, "true"); err != nil {
+		return false, err
+	}
+	if err := h.DB.SwitchUser(serverUser.ID); err != nil {
+		return false, err
+	}
 	h.DB.SetCurrentUser(serverUser.ID)
 	h.Files.InitUserDirs(serverUser.ID)
 	if h.Proxy.token != "" {
@@ -1186,7 +1215,7 @@ func (h *Handler) adoptServerUser(email, pwd string) bool {
 	}
 	h.DB.SetConfig("proxy:email", email)
 	h.DB.SetConfig("proxy:pwd", pwd)
-	return hasLocalCache
+	return hasLocalCache, nil
 }
 
 func (h *Handler) fireLoginHook(hasLocalCache bool) (any, error) {

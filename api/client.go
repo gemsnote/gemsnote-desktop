@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"fmt"
+	"net/http"
 	"reflect"
 	"strings"
 	"time"
@@ -24,15 +26,23 @@ const (
 	defaultRequestTimeout = 60 * time.Second
 	noteUploadTimeout     = 10 * time.Minute
 	noteContentTimeout    = 5 * time.Minute
+	tlsHandshakeTimeout   = 30 * time.Second
 )
 
 func NewClient() *Client {
 	return &Client{
-		client:        resty.New().SetTimeout(defaultRequestTimeout),
-		uploadClient:  resty.New().SetTimeout(noteUploadTimeout),
-		contentClient: resty.New().SetTimeout(noteContentTimeout),
+		client:        newRestyClient(defaultRequestTimeout),
+		uploadClient:  newRestyClient(noteUploadTimeout),
+		contentClient: newRestyClient(noteContentTimeout),
 		version:       "linux_amd64_2.0",
 	}
+}
+
+func newRestyClient(timeout time.Duration) *resty.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSHandshakeTimeout = tlsHandshakeTimeout
+	transport.MaxIdleConnsPerHost = 4
+	return resty.New().SetTransport(transport).SetTimeout(timeout)
 }
 
 func (c *Client) SetToken(token string) {
@@ -87,12 +97,16 @@ func (c *Client) get(path string, params map[string]string) (*resty.Response, er
 }
 
 func (c *Client) getWithClient(client *resty.Client, path string, params map[string]string) (*resty.Response, error) {
+	return c.getWithClientContext(context.Background(), client, path, params)
+}
+
+func (c *Client) getWithClientContext(ctx context.Context, client *resty.Client, path string, params map[string]string) (*resty.Response, error) {
 	allParams := c.commonParams()
 	for k, v := range params {
 		allParams[k] = v
 	}
 
-	resp, err := client.R().SetQueryParams(allParams).Get(path)
+	resp, err := client.R().SetContext(ctx).SetQueryParams(allParams).Get(path)
 	if err != nil {
 		err = c.redactError(err)
 		logrus.Errorf("API GET %s error: %v", path, err)
@@ -100,6 +114,9 @@ func (c *Client) getWithClient(client *resty.Client, path string, params map[str
 	}
 
 	logrus.Debugf("API GET %s status: %d", path, resp.StatusCode())
+	if resp.Time() >= 2*time.Second || path == "note/getSyncNotesWithContent" {
+		logrus.Infof("API GET %s: status=%d elapsed=%s bytes=%d", path, resp.StatusCode(), resp.Time().Round(time.Millisecond), len(resp.Body()))
+	}
 	if resp.IsError() {
 		logrus.Errorf("API GET %s failed: status=%d body=%s", path, resp.StatusCode(), strings.TrimSpace(resp.String()))
 	}

@@ -108,26 +108,30 @@ func main() {
 
 	serverProxy := webapi.NewServerProxy(database, app.files)
 	apiHandler := &webapi.Handler{
-		DB:      database,
-		Files:   service.NewFileService(database),
-		Proxy:   serverProxy,
-		Version: AppVersion,
-		Dist:    dist,
+		DB:            database,
+		Files:         service.NewFileService(database),
+		Proxy:         serverProxy,
+		Version:       AppVersion,
+		Dist:          dist,
+		OnBeforeLogin: app.sync.StopBackgroundDownloads,
 		OnLogin: func(hasLocalCache bool) (any, error) {
 			if hasLocalCache {
 				app.SetAutoSyncPaused(true)
 				return map[string]interface{}{"SyncChoiceRequired": true}, nil
 			}
 			app.SetAutoSyncPaused(true)
-			result := app.ResetSync()
-			if result["Ok"] != true {
-				return map[string]interface{}{"InitialSyncError": result["Msg"]}, nil
-			}
-			serverProxy.RefreshUserProfile()
-			go app.sharedSync.SyncOnce()
-			return map[string]interface{}{"ResetSynced": true}, nil
+			// Return authentication immediately. The frontend starts ResetSync as
+			// a separate request so it can distinguish "signing in" from the
+			// potentially long initial download and display accurate progress.
+			return map[string]interface{}{"ResetSyncRequired": true}, nil
 		},
 		OnSessionChanged: app.SetSessionLive,
+		OnSyncProgress:   app.GetSyncProgress,
+		OnWaitForImage:   app.sync.WaitForBackgroundImage,
+		OnDownloadStatus: app.sync.GetDownloadStatus,
+		OnInitialSync: func() (any, error) {
+			return app.InitialSync(), nil
+		},
 		OnLogout: func() error {
 			user, _ := database.GetActiveUser()
 			if user == nil || user.IsLocal || user.Host == "" || user.Token == "" {
@@ -172,19 +176,17 @@ func main() {
 			return result, nil
 		},
 		OnResetSync: func() (any, error) {
-			result := app.ResetSync()
-			if result["Ok"] == true {
-				serverProxy.RefreshUserProfile()
-			}
-			return result, nil
+			return app.ResetSync(), nil
 		},
 		OnSharedDownload: func() { go app.sharedSync.DownloadPending() },
 	}
 
 	err = wails.Run(&options.App{
+		// Stay above the shared UI's 1100px compact breakpoint so all three
+		// columns are visible on startup; smaller windows remain resizable.
 		Title:     "Gemsnote 珠玑笔记",
-		Width:     1050,
-		Height:    595,
+		Width:     1280,
+		Height:    800,
 		MinWidth:  800,
 		MinHeight: 500,
 		AssetServer: &assetserver.Options{

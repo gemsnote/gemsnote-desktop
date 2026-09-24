@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -88,9 +90,19 @@ func (s *LastSyncStateResponse) UnmarshalJSON(data []byte) error {
 }
 
 func (c *Client) GetLastSyncState() (*LastSyncStateResponse, error) {
-	resp, err := c.get("user/getSyncState", nil)
+	var resp *resty.Response
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		resp, err = c.get("user/getSyncState", nil)
+		if err == nil && resp.StatusCode() < 500 {
+			break
+		}
+		if attempt < 3 {
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+		}
+	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get sync state after 3 attempts: %w", err)
 	}
 
 	var state LastSyncStateResponse
@@ -246,16 +258,26 @@ func (c *Client) GetNote(noteID string) (*models.Note, error) {
 }
 
 func (c *Client) GetImage(fileID, localPath string) (string, error) {
-	resp, err := c.get("file/getImage", map[string]string{
+	return c.GetImageContext(context.Background(), fileID, localPath)
+}
+
+func (c *Client) GetImageContext(ctx context.Context, fileID, localPath string) (string, error) {
+	resp, err := c.getWithClientContext(ctx, c.client, "file/getImage", map[string]string{
 		"fileId": fileID,
 	})
 	if err != nil {
 		return "", err
 	}
 
-	contentType := resp.Header().Get("Content-Type")
+	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
+		return "", fmt.Errorf("download image failed (HTTP %d)", resp.StatusCode())
+	}
+	contentType, _, _ := mime.ParseMediaType(resp.Header().Get("Content-Type"))
+	if contentType != "" && !strings.HasPrefix(contentType, "image/") && contentType != "application/octet-stream" {
+		return "", fmt.Errorf("download image returned %s instead of an image", contentType)
+	}
 	ext := "png"
-	if contentType != "" {
+	if strings.HasPrefix(contentType, "image/") {
 		parts := strings.Split(contentType, "/")
 		if len(parts) > 1 {
 			ext = parts[1]
@@ -273,11 +295,18 @@ func (c *Client) GetImage(fileID, localPath string) (string, error) {
 }
 
 func (c *Client) GetAttach(fileID, localPath string) (string, string, error) {
-	resp, err := c.get("file/getAttach", map[string]string{
+	return c.GetAttachContext(context.Background(), fileID, localPath)
+}
+
+func (c *Client) GetAttachContext(ctx context.Context, fileID, localPath string) (string, string, error) {
+	resp, err := c.getWithClientContext(ctx, c.client, "file/getAttach", map[string]string{
 		"fileId": fileID,
 	})
 	if err != nil {
 		return "", "", err
+	}
+	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
+		return "", "", fmt.Errorf("download attachment failed (HTTP %d)", resp.StatusCode())
 	}
 
 	contentDisposition := resp.Header().Get("Content-Disposition")
@@ -302,7 +331,9 @@ func (c *Client) GetAttach(fileID, localPath string) (string, string, error) {
 		}
 	}
 
-	fullPath := filepath.Join(localPath, filename)
+	// Concurrent attachments may share a display filename. Never overwrite
+	// another download (or trust a server-supplied filename as a local path).
+	fullPath := filepath.Join(localPath, utils.UUID()+filepath.Ext(filepath.Base(filename)))
 
 	if err := os.WriteFile(fullPath, resp.Body(), 0644); err != nil {
 		return "", "", err
