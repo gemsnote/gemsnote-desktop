@@ -2,10 +2,67 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
+	"sort"
+	"strings"
 
 	"github.com/gemsnote/gemsnote/models"
 	"github.com/gemsnote/gemsnote/utils"
 )
+
+// GetUsedTags includes tags missing from the index in older local caches.
+// Read only tag columns; no note bodies or network access are needed.
+func (d *Database) GetUsedTags(userID string) ([]*models.Tag, error) {
+	rows, err := d.db.Query(`SELECT tags FROM notes WHERE user_id = ? AND is_trash = 0 AND (local_is_delete = 0 OR local_is_delete IS NULL)`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	counts := map[string]int{}
+	for rows.Next() {
+		var raw sql.NullString
+		if err := rows.Scan(&raw); err != nil {
+			return nil, err
+		}
+		var tags []string
+		if raw.Valid && raw.String != "" {
+			if err := json.Unmarshal([]byte(raw.String), &tags); err != nil {
+				return nil, err
+			}
+		}
+		seen := map[string]bool{}
+		for _, tag := range tags {
+			if strings.TrimSpace(tag) != "" && !seen[tag] {
+				counts[tag]++
+				seen[tag] = true
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Release the read cursor before querying the index (SQLite may use one connection).
+	rows.Close()
+	indexedTags, err := d.GetTags(userID)
+	if err != nil {
+		return nil, err
+	}
+	indexed := map[string]*models.Tag{}
+	for _, tag := range indexedTags {
+		indexed[tag.Tag] = tag
+	}
+	tags := make([]*models.Tag, 0, len(counts))
+	for tag, count := range counts {
+		entry := indexed[tag]
+		if entry == nil {
+			entry = &models.Tag{Tag: tag, UserID: userID}
+		}
+		entry.Count = count
+		tags = append(tags, entry)
+	}
+	sort.Slice(tags, func(i, j int) bool { return tags[i].Tag < tags[j].Tag })
+	return tags, nil
+}
 
 func (d *Database) InsertTag(tag *models.Tag) error {
 	_, err := d.db.Exec(`

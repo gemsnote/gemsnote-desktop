@@ -149,26 +149,13 @@ func (h *Handler) bootstrap(w http.ResponseWriter) {
 	if err != nil {
 		notebooks = nil
 	}
-	tags, err := h.DB.GetTags(user.ID)
+	tags, err := h.DB.GetUsedTags(user.ID)
 	if err != nil {
 		tags = nil
 	}
 	if tags == nil {
 		tags = []*models.Tag{}
 	}
-	filteredTags := tags[:0]
-	for _, tag := range tags {
-		if tag == nil {
-			continue
-		}
-		if count, countErr := h.DB.CountNotesByTag(user.ID, tag.Tag); countErr == nil {
-			tag.Count = count
-		}
-		if tag.Count > 0 {
-			filteredTags = append(filteredTags, tag)
-		}
-	}
-	tags = filteredTags
 	totalNotes, err := h.DB.CountAllNotes(user.ID)
 	if err != nil {
 		totalNotes = 0
@@ -546,7 +533,7 @@ func (h *Handler) touchTags(userID string, tags []string) {
 		if tag == "" {
 			continue
 		}
-		if _, err := h.DB.GetTag(userID, tag); err != nil {
+		if existing, err := h.DB.GetTag(userID, tag); err == nil && existing == nil {
 			h.DB.AddOrUpdateTag(userID, tag, false, 0)
 		}
 		if count, err := h.DB.CountNotesByTag(userID, tag); err == nil {
