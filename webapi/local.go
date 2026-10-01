@@ -613,6 +613,40 @@ func (h *Handler) addNotebook(w http.ResponseWriter, r *http.Request) {
 	h.ok(w)
 }
 
+func (h *Handler) moveNotebook(w http.ResponseWriter, r *http.Request) {
+	user := h.requireUser(w)
+	if user == nil {
+		return
+	}
+	nb := h.ownedNotebook(user.ID, h.form(r, "notebookId"))
+	if nb == nil || nb.IsDeleted {
+		h.fail(w, "notExists")
+		return
+	}
+	parentID := h.form(r, "parentNotebookId")
+	seen := map[string]bool{nb.NotebookID: true}
+	for id := parentID; id != ""; {
+		if seen[id] {
+			h.fail(w, "invalidParentNotebook")
+			return
+		}
+		seen[id] = true
+		parent := h.ownedNotebook(user.ID, id)
+		if parent == nil || parent.IsDeleted {
+			h.fail(w, "invalidParentNotebook")
+			return
+		}
+		id = parent.ParentNotebookID
+	}
+	nb.ParentNotebookID = parentID
+	nb.IsDirty = true
+	if err := h.DB.UpdateNotebook(nb); err != nil {
+		h.fail(w, err.Error())
+		return
+	}
+	h.ok(w)
+}
+
 func (h *Handler) renameNotebook(w http.ResponseWriter, r *http.Request) {
 	user := h.requireUser(w)
 	if user == nil {

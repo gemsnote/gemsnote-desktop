@@ -214,6 +214,8 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) bool {
 		h.addNotebook(w, r)
 	case path == "/api2/notebook/updateNotebookTitle":
 		h.renameNotebook(w, r)
+	case path == "/api2/notebook/moveNotebook" && method == http.MethodPost:
+		h.moveNotebook(w, r)
 	case path == "/api2/notebook/deleteNotebook":
 		h.deleteNotebook(w, r)
 	case path == "/api2/note/deleteNote":

@@ -411,6 +411,26 @@ func TestNotebookOperations(t *testing.T) {
 	}
 
 	e.postJSON(t, "/api2/notebook/updateNotebookTitle", url.Values{"notebookId": {childID}, "title": {"改名"}}, &resp)
+	e.postJSON(t, "/api2/notebook/moveNotebook", url.Values{"notebookId": {notebookID}, "parentNotebookId": {childID}}, &resp)
+	if resp["Ok"] != false {
+		t.Fatalf("cycle allowed: %v", resp)
+	}
+	e.postJSON(t, "/api2/notebook/moveNotebook", url.Values{"notebookId": {childID}, "parentNotebookId": {childID}}, &resp)
+	if resp["Ok"] != false {
+		t.Fatalf("self parent allowed: %v", resp)
+	}
+	e.postJSON(t, "/api2/notebook/moveNotebook", url.Values{"notebookId": {childID}, "parentNotebookId": {utils.ObjectId()}}, &resp)
+	if resp["Ok"] != false {
+		t.Fatalf("missing parent allowed: %v", resp)
+	}
+	e.postJSON(t, "/api2/notebook/moveNotebook", url.Values{"notebookId": {childID}, "parentNotebookId": {""}}, &resp)
+	if resp["Ok"] != true {
+		t.Fatalf("move to root failed: %v", resp)
+	}
+	moved, _ := e.db.GetNotebook(childID)
+	if moved == nil || moved.ParentNotebookID != "" || !moved.IsDirty {
+		t.Fatalf("move not persisted: %+v", moved)
+	}
 	e.postJSON(t, "/api2/notebook/deleteNotebook", url.Values{"notebookId": {notebookID}}, &resp)
 	if resp["Ok"] != false {
 		t.Fatalf("expected delete of non-empty notebook to fail: %v", resp)
