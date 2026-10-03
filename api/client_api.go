@@ -152,6 +152,14 @@ func (c *Client) GetSyncNotes(afterUsn int64, maxEntry int) ([]*models.Note, err
 	if err := json.Unmarshal(resp.Body(), &notes); err != nil {
 		return nil, err
 	}
+	// This endpoint returns metadata only. The server's shared DTO includes
+	// Content:"" as a placeholder; it is NOT a downloaded empty body.
+	for _, note := range notes {
+		if note != nil {
+			note.Content = ""
+			note.ContentPresent = false
+		}
+	}
 
 	return notes, nil
 }
@@ -253,6 +261,9 @@ func (c *Client) GetNote(noteID string) (*models.Note, error) {
 	if err := json.Unmarshal(resp.Body(), &note); err != nil {
 		return nil, err
 	}
+	// Like GetSyncNotes, GetNote uses the metadata DTO, not a body snapshot.
+	note.Content = ""
+	note.ContentPresent = false
 
 	return &note, nil
 }

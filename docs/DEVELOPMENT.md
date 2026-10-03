@@ -9,6 +9,11 @@ Gemsnote Desktop 使用 Go + Wails v2.12.0 构建，前端是主仓库 Vue Web U
 保留 dirty 数据并报错。完全同步会重新读取已存在的干净笔记正文，即使 USN 相等，
 以修复旧版本“USN 已更新、正文仍旧”的缓存。清空正文也是有效更新。
 
+`getSyncNotes` 和 `getNote` 的服务端元数据 DTO 也会序列化 `Content:""` 占位字段，
+不能依据字段存在就认为已下载正文。API 客户端在这两个入口清除 `ContentPresent`，
+只有 `getSyncNotesWithContent` 的正文快照可以保留该标志（包括有效的空正文）。
+回归测试必须经过真实形状的 HTTP JSON 解码、同步和 SQLite 落库路径。
+
 SQLite schema v3 新增 `local_edited_time`（bridge 字段 `LocalEditedTime`），记录本机
 编辑时间，上传不发送此字段，也不发送 `UpdatedTime`；后者由服务端生成并回写本地。
 已有笔记离线编辑不再覆盖上次确认的 `UpdatedTime`。全新未上传笔记的旧展示字段
