@@ -550,9 +550,7 @@ func (c *Client) AddNote(note *models.Note) (*models.Note, error) {
 	if note.CreatedTime != nil {
 		data["CreatedTime"] = note.CreatedTime.Format(time.RFC3339Nano)
 	}
-	if note.UpdatedTime != nil {
-		data["UpdatedTime"] = note.UpdatedTime.Format(time.RFC3339Nano)
-	}
+	// UpdatedTime is assigned by the server; local edit time stays in SQLite.
 
 	resp, err := c.postNoteUpload("note/addNote", data, nil)
 	if err != nil {
@@ -578,9 +576,7 @@ func (c *Client) UpdateNote(note *models.Note) (*models.Note, error) {
 	if note.CreatedTime != nil {
 		data["CreatedTime"] = note.CreatedTime.Format(time.RFC3339Nano)
 	}
-	if note.UpdatedTime != nil {
-		data["UpdatedTime"] = note.UpdatedTime.Format(time.RFC3339Nano)
-	}
+	// UpdatedTime is assigned by the server; local edit time stays in SQLite.
 
 	if note.ContentIsDirty {
 		data["Content"] = note.Content

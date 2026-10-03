@@ -124,7 +124,7 @@ func TestImageDownloadDoesNotCacheErrorPages(t *testing.T) {
 	}
 }
 
-func TestAddNoteSendsStableIDAndOriginalTimes(t *testing.T) {
+func TestAddNotePreservesCreationTimeButUsesServerModificationTime(t *testing.T) {
 	created := time.Date(2020, 2, 3, 4, 5, 6, 0, time.UTC)
 	updated := created.Add(2 * time.Hour)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -134,7 +134,7 @@ func TestAddNoteSendsStableIDAndOriginalTimes(t *testing.T) {
 		for key, want := range map[string]string{
 			"ClientNoteId": "507f1f77bcf86cd799439011",
 			"CreatedTime":  created.Format(time.RFC3339Nano),
-			"UpdatedTime":  updated.Format(time.RFC3339Nano),
+			"UpdatedTime":  "",
 		} {
 			if got := r.Form.Get(key); got != want {
 				t.Errorf("%s = %q, want %q", key, got, want)

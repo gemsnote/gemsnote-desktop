@@ -1124,21 +1124,22 @@ func notesToMaps(notes []*models.Note) []map[string]interface{} {
 
 func noteToMap(note *models.Note) map[string]interface{} {
 	return map[string]interface{}{
-		"NoteId":       note.NoteID,
-		"NotebookId":   note.NotebookID,
-		"Title":        note.Title,
-		"Desc":         note.Desc,
-		"ImgSrc":       note.ImgSrc,
-		"Tags":         note.Tags,
-		"IsMarkdown":   note.IsMarkdown,
-		"IsBlog":       note.IsBlog,
-		"IsTrash":      note.IsTrash,
-		"IsStar":       note.IsStar,
-		"CreatedTime":  note.CreatedTime,
-		"UpdatedTime":  note.UpdatedTime,
-		"IsDirty":      note.IsDirty,
-		"LocalIsNew":   note.LocalIsNew,
-		"ServerNoteId": note.ServerNoteID,
+		"NoteId":          note.NoteID,
+		"NotebookId":      note.NotebookID,
+		"Title":           note.Title,
+		"Desc":            note.Desc,
+		"ImgSrc":          note.ImgSrc,
+		"Tags":            note.Tags,
+		"IsMarkdown":      note.IsMarkdown,
+		"IsBlog":          note.IsBlog,
+		"IsTrash":         note.IsTrash,
+		"IsStar":          note.IsStar,
+		"CreatedTime":     note.CreatedTime,
+		"UpdatedTime":     note.UpdatedTime,
+		"LocalEditedTime": note.LocalEditedTime,
+		"IsDirty":         note.IsDirty,
+		"LocalIsNew":      note.LocalIsNew,
+		"ServerNoteId":    note.ServerNoteID,
 	}
 }
 

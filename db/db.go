@@ -87,7 +87,7 @@ func (d *Database) Close() error {
 	return d.db.Close()
 }
 
-const dbSchemaVersion = 2
+const dbSchemaVersion = 3
 
 func (d *Database) migrate() error {
 	migrationSQL, err := migrationsFS.ReadFile("migrations.sql")
@@ -108,6 +108,13 @@ func (d *Database) migrate() error {
 	}
 
 	steps := map[int]func(tx *sql.Tx) error{
+		3: func(tx *sql.Tx) error {
+			if err := d.ensureColumn(tx, "notes", "local_edited_time", "INTEGER"); err != nil {
+				return err
+			}
+			_, err := tx.Exec(`UPDATE notes SET local_edited_time = updated_time WHERE is_dirty = 1`)
+			return err
+		},
 		2: func(tx *sql.Tx) error {
 			for _, col := range []struct{ name, ddl string }{
 				{"staging_snapshot_id", "TEXT DEFAULT ''"},

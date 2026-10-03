@@ -177,7 +177,7 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 			if !note.IsDeleted {
 				remoteIDs[note.NoteID] = true
 			}
-			if err := s.processNoteSync(note, syncInfo); err != nil {
+			if err := s.processNoteSync(note, syncInfo, afterUsn < 0); err != nil {
 				return fmt.Errorf("process remote note %s: %w", note.NoteID, err)
 			}
 			if withContentSnapshot {
@@ -217,7 +217,7 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 	return nil
 }
 
-func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.SyncInfo) error {
+func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.SyncInfo, repair ...bool) error {
 	remoteNoteID := serverNote.NoteID
 	if serverNote.IsDeleted {
 		localID, _ := s.db.GetLocalNoteID(serverNote.NoteID)
@@ -267,6 +267,15 @@ func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.
 	}
 
 	if localNote == nil {
+		if !serverNote.ContentPresent {
+			content, err := s.api.GetNoteContent(remoteNoteID)
+			if err != nil {
+				return err
+			}
+			copyNote := *serverNote
+			copyNote.Content, copyNote.ContentPresent = content, true
+			serverNote = &copyNote
+		}
 		if serverNote.ContentPresent {
 			copyNote := *serverNote
 			copyNote.Content = s.localizeNoteContent(serverNote.Content)
@@ -292,8 +301,36 @@ func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.
 	serverNoteCopy := *serverNote
 	serverNoteCopy.NoteID = localNote.NoteID
 	serverNote = &serverNoteCopy
+	if !serverNote.IsStarPresent {
+		serverNote.IsStar = localNote.IsStar
+	}
+	if serverNote.NotebookID == "" {
+		serverNote.NotebookID = localNote.NotebookID
+	}
+
+	// Fetch the body before acknowledging its USN. Full sync also repairs
+	// caches whose USN was advanced by older clients without fetching content.
+	if !localNote.IsDirty && (localNote.Usn != serverNote.Usn || localNote.InitSync || localNote.Content == "" || (len(repair) > 0 && repair[0])) {
+		if !serverNote.ContentPresent {
+			content, err := s.api.GetNoteContent(remoteNoteID)
+			if err != nil {
+				return err
+			}
+			serverNote.Content = content
+		}
+		serverNote.Content = s.localizeNoteContent(serverNote.Content)
+		serverNote.ContentPresent = true
+		if err := s.db.ApplyRemoteNote(localNote, serverNote); err != nil {
+			return err
+		}
+		syncInfo.Note.Updates = append(syncInfo.Note.Updates, localNote.NoteID)
+		return nil
+	}
 
 	if localNote.Usn == serverNote.Usn {
+		if localNote.IsDirty {
+			return nil
+		}
 		if serverNote.NotebookID != "" && localNote.NotebookID != serverNote.NotebookID {
 			if err := s.db.SetNoteNotebook(localNote.NoteID, serverNote.NotebookID); err != nil {
 				return err
@@ -324,11 +361,17 @@ func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.
 		if err != nil {
 			return err
 		}
+		serverNote.Content = s.localizeNoteContent(serverContent)
+		serverNote.ContentPresent = true
 
-		if serverContent == localNote.Content {
+		if serverNote.Content == localNote.Content {
 			// Matching bodies need no conflict copy. Server metadata wins,
 			// regardless of local timestamps or metadata-only edits.
-			return s.db.UpdateNoteForce(serverNote, false)
+			if err := s.db.ApplyRemoteNote(localNote, serverNote); err != nil {
+				return err
+			}
+			syncInfo.Note.Updates = append(syncInfo.Note.Updates, localNote.NoteID)
+			return nil
 		}
 
 		conflictCopy, err := s.db.CopyNoteForConflict(localNote.NoteID)
@@ -345,10 +388,7 @@ func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.
 		// The conflict copy owns the local edit. Replace the original row
 		// with the current server version so its USN becomes a valid base and
 		// the same conflict is not raised forever on every subsequent sync.
-		if err := s.db.UpdateNoteForce(serverNote, true); err != nil {
-			return err
-		}
-		if err := s.syncNoteContentAndFiles(localNote); err != nil {
+		if err := s.db.ApplyRemoteNote(localNote, serverNote); err != nil {
 			return err
 		}
 		syncInfo.Note.Updates = append(syncInfo.Note.Updates, localNote.NoteID)

@@ -200,14 +200,15 @@ func (h *Handler) bootstrap(w http.ResponseWriter) {
 
 func (h *Handler) noteListItem(n *models.Note) map[string]any {
 	return map[string]any{
-		"NoteId":      n.NoteID,
-		"NotebookId":  n.NotebookID,
-		"Title":       n.Title,
-		"Desc":        n.Desc,
-		"IsStar":      n.IsStar,
-		"IsDirty":     n.IsDirty,
-		"CreatedTime": timeOrNow(n.CreatedTime),
-		"UpdatedTime": timeOrNow(n.UpdatedTime),
+		"NoteId":          n.NoteID,
+		"NotebookId":      n.NotebookID,
+		"Title":           n.Title,
+		"Desc":            n.Desc,
+		"IsStar":          n.IsStar,
+		"IsDirty":         n.IsDirty,
+		"CreatedTime":     timeOrNow(n.CreatedTime),
+		"UpdatedTime":     timeOrNow(n.UpdatedTime),
+		"LocalEditedTime": n.LocalEditedTime,
 	}
 }
 
@@ -236,16 +237,17 @@ func (h *Handler) documentNote(n *models.Note) map[string]any {
 		tags = []string{}
 	}
 	return map[string]any{
-		"NoteId":      n.NoteID,
-		"NotebookId":  n.NotebookID,
-		"UserId":      n.UserID,
-		"Title":       n.Title,
-		"Tags":        tags,
-		"Usn":         n.Usn,
-		"IsMarkdown":  n.IsMarkdown,
-		"IsTrash":     n.IsTrash,
-		"CreatedTime": timeOrNow(n.CreatedTime),
-		"UpdatedTime": timeOrNow(n.UpdatedTime),
+		"NoteId":          n.NoteID,
+		"NotebookId":      n.NotebookID,
+		"UserId":          n.UserID,
+		"Title":           n.Title,
+		"Tags":            tags,
+		"Usn":             n.Usn,
+		"IsMarkdown":      n.IsMarkdown,
+		"IsTrash":         n.IsTrash,
+		"CreatedTime":     timeOrNow(n.CreatedTime),
+		"UpdatedTime":     timeOrNow(n.UpdatedTime),
+		"LocalEditedTime": n.LocalEditedTime,
 	}
 }
 

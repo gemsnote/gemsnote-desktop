@@ -3,11 +3,22 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/gemsnote/gemsnote/models"
 	"github.com/gemsnote/gemsnote/utils"
 )
+
+func initialLocalEditTime(note *models.Note) interface{} {
+	if note.LocalEditedTime != nil {
+		return noteTime(note.LocalEditedTime)
+	}
+	if note.IsDirty {
+		return noteTime(note.UpdatedTime)
+	}
+	return nil
+}
 
 func (d *Database) InsertNote(note *models.Note) error {
 	tagsJSON, _ := json.Marshal(note.Tags)
@@ -19,15 +30,15 @@ func (d *Database) InsertNote(note *models.Note) error {
 			is_markdown, is_trash, is_blog, is_star, usn,
 			is_dirty, content_is_dirty, local_is_new, local_is_delete, init_sync,
 			conflict_note_id, conflict_time, conflict_fixed, err,
-			created_time, updated_time
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			created_time, updated_time, local_edited_time
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		note.ID, note.NoteID, note.ServerNoteID, note.NotebookID, note.UserID,
 		note.Title, note.Content, note.Desc, note.Abstract, note.ImgSrc, string(tagsJSON),
 		note.IsMarkdown, note.IsTrash, note.IsBlog, note.IsStar, note.Usn,
 		note.IsDirty, note.ContentIsDirty, note.LocalIsNew, note.LocalIsDelete, note.InitSync,
 		note.ConflictNoteID, utils.TimeToUnix(note.ConflictTime), note.ConflictFixed, note.Err,
-		utils.TimeToUnix(note.CreatedTime), utils.TimeToUnix(note.UpdatedTime),
+		utils.TimeToUnix(note.CreatedTime), utils.TimeToUnix(note.UpdatedTime), initialLocalEditTime(note),
 	)
 	return err
 }
@@ -42,15 +53,15 @@ func (d *Database) InsertNoteTx(tx *sql.Tx, note *models.Note) error {
 			is_markdown, is_trash, is_blog, is_star, usn,
 			is_dirty, content_is_dirty, local_is_new, local_is_delete, init_sync,
 			conflict_note_id, conflict_time, conflict_fixed, err,
-			created_time, updated_time
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			created_time, updated_time, local_edited_time
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
 		note.ID, note.NoteID, note.ServerNoteID, note.NotebookID, note.UserID,
 		note.Title, note.Content, note.Desc, note.Abstract, note.ImgSrc, string(tagsJSON),
 		note.IsMarkdown, note.IsTrash, note.IsBlog, note.IsStar, note.Usn,
 		note.IsDirty, note.ContentIsDirty, note.LocalIsNew, note.LocalIsDelete, note.InitSync,
 		note.ConflictNoteID, utils.TimeToUnix(note.ConflictTime), note.ConflictFixed, note.Err,
-		utils.TimeToUnix(note.CreatedTime), utils.TimeToUnix(note.UpdatedTime),
+		utils.TimeToUnix(note.CreatedTime), utils.TimeToUnix(note.UpdatedTime), initialLocalEditTime(note),
 	)
 	return err
 }
@@ -62,7 +73,7 @@ func (d *Database) GetNote(noteID string) (*models.Note, error) {
 			is_markdown, is_trash, is_blog, is_star, usn,
 			is_dirty, content_is_dirty, local_is_new, local_is_delete, init_sync,
 			conflict_note_id, conflict_time, conflict_fixed, err,
-			created_time, updated_time
+			created_time, updated_time, local_edited_time
 		FROM notes WHERE note_id = ?
 	`, noteID)
 
@@ -76,7 +87,7 @@ func (d *Database) GetNoteByServerID(serverNoteID string) (*models.Note, error) 
 			is_markdown, is_trash, is_blog, is_star, usn,
 			is_dirty, content_is_dirty, local_is_new, local_is_delete, init_sync,
 			conflict_note_id, conflict_time, conflict_fixed, err,
-			created_time, updated_time
+			created_time, updated_time, local_edited_time
 		FROM notes WHERE server_note_id = ?
 	`, serverNoteID)
 
@@ -115,10 +126,10 @@ func (d *Database) GetNotes(notebookID string) ([]*models.Note, error) {
 			is_markdown, is_trash, is_blog, is_star, usn,
 			is_dirty, content_is_dirty, local_is_new, local_is_delete, init_sync,
 			conflict_note_id, conflict_time, conflict_fixed, err,
-			created_time, updated_time
+			created_time, updated_time, local_edited_time
 		FROM notes 
 		WHERE notebook_id = ? AND is_trash = 0 AND (local_is_delete = 0 OR local_is_delete IS NULL)
-		ORDER BY updated_time DESC
+		ORDER BY COALESCE(CASE WHEN is_dirty = 1 THEN local_edited_time END, updated_time) DESC
 	`, notebookID)
 	if err != nil {
 		return nil, err
@@ -135,10 +146,10 @@ func (d *Database) GetTrashNotes(userID string) ([]*models.Note, error) {
 			is_markdown, is_trash, is_blog, is_star, usn,
 			is_dirty, content_is_dirty, local_is_new, local_is_delete, init_sync,
 			conflict_note_id, conflict_time, conflict_fixed, err,
-			created_time, updated_time
+			created_time, updated_time, local_edited_time
 		FROM notes 
 		WHERE user_id = ? AND is_trash = 1 AND (local_is_delete = 0 OR local_is_delete IS NULL)
-		ORDER BY updated_time DESC
+		ORDER BY COALESCE(CASE WHEN is_dirty = 1 THEN local_edited_time END, updated_time) DESC
 	`, userID)
 	if err != nil {
 		return nil, err
@@ -155,10 +166,10 @@ func (d *Database) GetAllNotes(userID string) ([]*models.Note, error) {
 			is_markdown, is_trash, is_blog, is_star, usn,
 			is_dirty, content_is_dirty, local_is_new, local_is_delete, init_sync,
 			conflict_note_id, conflict_time, conflict_fixed, err,
-			created_time, updated_time
+			created_time, updated_time, local_edited_time
 		FROM notes
 		WHERE user_id = ? AND is_trash = 0 AND (local_is_delete = 0 OR local_is_delete IS NULL)
-		ORDER BY updated_time DESC
+		ORDER BY COALESCE(CASE WHEN is_dirty = 1 THEN local_edited_time END, updated_time) DESC
 	`, userID)
 	if err != nil {
 		return nil, err
@@ -170,7 +181,7 @@ func (d *Database) GetAllNotes(userID string) ([]*models.Note, error) {
 
 func (d *Database) MarkNoteLocalDelete(noteID string) error {
 	_, err := d.db.Exec(`
-		UPDATE notes SET local_is_delete = 1, is_dirty = 1, is_trash = 1, updated_time = ?
+		UPDATE notes SET local_is_delete = 1, is_dirty = 1, is_trash = 1, local_edited_time = ?
 		WHERE note_id = ?
 	`, time.Now().Unix(), noteID)
 	return err
@@ -183,10 +194,10 @@ func (d *Database) GetStarNotes(userID string) ([]*models.Note, error) {
 			is_markdown, is_trash, is_blog, is_star, usn,
 			is_dirty, content_is_dirty, local_is_new, local_is_delete, init_sync,
 			conflict_note_id, conflict_time, conflict_fixed, err,
-			created_time, updated_time
+			created_time, updated_time, local_edited_time
 		FROM notes
 		WHERE user_id = ? AND is_star = 1 AND is_trash = 0 AND (local_is_delete = 0 OR local_is_delete IS NULL)
-		ORDER BY updated_time DESC
+		ORDER BY COALESCE(CASE WHEN is_dirty = 1 THEN local_edited_time END, updated_time) DESC
 	`, userID)
 	if err != nil {
 		return nil, err
@@ -203,11 +214,11 @@ func (d *Database) SearchNotes(userID, keyword string) ([]*models.Note, error) {
 			is_markdown, is_trash, is_blog, is_star, usn,
 			is_dirty, content_is_dirty, local_is_new, local_is_delete, init_sync,
 			conflict_note_id, conflict_time, conflict_fixed, err,
-			created_time, updated_time
+			created_time, updated_time, local_edited_time
 		FROM notes 
 		WHERE user_id = ? AND is_trash = 0 AND (local_is_delete = 0 OR local_is_delete IS NULL)
 			AND (title LIKE ? OR content LIKE ?)
-		ORDER BY updated_time DESC
+		ORDER BY COALESCE(CASE WHEN is_dirty = 1 THEN local_edited_time END, updated_time) DESC
 	`, userID, "%"+keyword+"%", "%"+keyword+"%")
 	if err != nil {
 		return nil, err
@@ -224,11 +235,11 @@ func (d *Database) SearchNotesByTag(userID, tag string) ([]*models.Note, error) 
 			is_markdown, is_trash, is_blog, is_star, usn,
 			is_dirty, content_is_dirty, local_is_new, local_is_delete, init_sync,
 			conflict_note_id, conflict_time, conflict_fixed, err,
-			created_time, updated_time
+			created_time, updated_time, local_edited_time
 		FROM notes 
 		WHERE user_id = ? AND is_trash = 0 AND (local_is_delete = 0 OR local_is_delete IS NULL)
 			AND tags LIKE ?
-		ORDER BY updated_time DESC
+		ORDER BY COALESCE(CASE WHEN is_dirty = 1 THEN local_edited_time END, updated_time) DESC
 	`, userID, "%\""+tag+"\"%")
 	if err != nil {
 		return nil, err
@@ -245,7 +256,7 @@ func (d *Database) GetDirtyNotes(userID string) ([]*models.Note, error) {
 			is_markdown, is_trash, is_blog, is_star, usn,
 			is_dirty, content_is_dirty, local_is_new, local_is_delete, init_sync,
 			conflict_note_id, conflict_time, conflict_fixed, err,
-			created_time, updated_time
+			created_time, updated_time, local_edited_time
 		FROM notes WHERE user_id = ? AND is_dirty = 1
 	`, userID)
 	if err != nil {
@@ -324,15 +335,51 @@ func (d *Database) UpdateNote(note *models.Note) error {
 	_, err := d.db.Exec(`
 		UPDATE notes SET
 			title = ?, content = ?, desc = ?, tags = ?, 
-			is_dirty = ?, content_is_dirty = ?, updated_time = ?
+			is_dirty = ?, content_is_dirty = ?, local_edited_time = ?
 		WHERE note_id = ?
 	`, note.Title, note.Content, note.Desc, string(tagsJSON), note.IsDirty, note.ContentIsDirty, time.Now().Unix(), note.NoteID)
 	return err
 }
 
 func (d *Database) SetNoteNotebook(noteID, notebookID string) error {
-	_, err := d.db.Exec(`UPDATE notes SET notebook_id = ?, updated_time = ? WHERE note_id = ?`, notebookID, time.Now().Unix(), noteID)
+	_, err := d.db.Exec(`UPDATE notes SET notebook_id = ? WHERE note_id = ?`, notebookID, noteID)
 	return err
+}
+
+// ApplyRemoteNote atomically confirms the downloaded body and metadata. A
+// concurrent local edit must not be cleared by an in-flight network response.
+func (d *Database) ApplyRemoteNote(before, remote *models.Note) error {
+	tags, _ := json.Marshal(remote.Tags)
+	beforeTags, _ := json.Marshal(before.Tags)
+	result, err := d.db.Exec(`UPDATE notes SET
+		content = ?, notebook_id = ?, title = ?, desc = ?, abstract = ?, img_src = ?, tags = ?,
+		is_markdown = ?, is_trash = ?, is_blog = ?, is_star = ?, usn = ?,
+		updated_time = COALESCE(?, updated_time), created_time = COALESCE(?, created_time),
+		init_sync = 0, err = '', is_dirty = 0, content_is_dirty = 0, local_is_new = 0, local_is_delete = 0
+		WHERE note_id = ? AND user_id = ? AND usn = ? AND is_dirty = ? AND content = ?
+		AND title = ? AND tags = ? AND notebook_id = ? AND is_star = ? AND is_trash = ? AND local_is_delete = ?`,
+		remote.Content, remote.NotebookID, remote.Title, remote.Desc, remote.Abstract, remote.ImgSrc, string(tags),
+		remote.IsMarkdown, remote.IsTrash, remote.IsBlog, remote.IsStar, remote.Usn,
+		noteTime(remote.UpdatedTime), noteTime(remote.CreatedTime), before.NoteID, before.UserID, before.Usn, before.IsDirty, before.Content,
+		before.Title, string(beforeTags), before.NotebookID, before.IsStar, before.IsTrash, before.LocalIsDelete)
+	if err != nil {
+		return err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n != 1 {
+		return fmt.Errorf("note changed locally during download: %s", before.NoteID)
+	}
+	return nil
+}
+
+func noteTime(t *time.Time) interface{} {
+	if t == nil || t.IsZero() {
+		return nil
+	}
+	return t.Unix()
 }
 
 func (d *Database) UpdateNoteForce(note *models.Note, needReloadContent bool) error {
@@ -356,10 +403,10 @@ func (d *Database) UpdateNoteForce(note *models.Note, needReloadContent bool) er
 			notebook_id = ?, title = ?, desc = ?, abstract = ?, img_src = ?, tags = ?,
 			is_markdown = ?, is_trash = ?, is_blog = ?, is_star = ?, usn = ?,
 			is_dirty = 0, content_is_dirty = 0, local_is_new = 0, local_is_delete = 0, init_sync = ?,
-			err = ''
+			err = '', updated_time = COALESCE(?, updated_time)
 		WHERE note_id = ?
 	`, notebookID, note.Title, note.Desc, note.Abstract, note.ImgSrc, string(tagsJSON),
-		note.IsMarkdown, note.IsTrash, note.IsBlog, note.IsStar, note.Usn, initSync, note.NoteID)
+		note.IsMarkdown, note.IsTrash, note.IsBlog, note.IsStar, note.Usn, initSync, noteTime(note.UpdatedTime), note.NoteID)
 	return err
 }
 
@@ -395,7 +442,7 @@ func (d *Database) AddNoteForce(note *models.Note) (*models.Note, error) {
 
 func (d *Database) DeleteNote(noteID string) error {
 	_, err := d.db.Exec(`
-		UPDATE notes SET is_trash = 1, is_dirty = 1, updated_time = ?
+		UPDATE notes SET is_trash = 1, is_dirty = 1, local_edited_time = ?
 		WHERE note_id = ?
 	`, time.Now().Unix(), noteID)
 	return err
@@ -417,7 +464,7 @@ func (d *Database) SetNoteTrash(noteID string, isTrash bool) error {
 		val = 1
 	}
 	_, err := d.db.Exec(`
-		UPDATE notes SET is_trash = ?, is_dirty = 1, updated_time = ?
+		UPDATE notes SET is_trash = ?, is_dirty = 1, local_edited_time = ?
 		WHERE note_id = ?
 	`, val, time.Now().Unix(), noteID)
 	return err
@@ -425,7 +472,7 @@ func (d *Database) SetNoteTrash(noteID string, isTrash bool) error {
 
 func (d *Database) MoveNote(noteID, notebookID string) error {
 	_, err := d.db.Exec(`
-		UPDATE notes SET notebook_id = ?, is_dirty = 1, is_trash = 0, local_is_delete = 0, updated_time = ?
+		UPDATE notes SET notebook_id = ?, is_dirty = 1, is_trash = 0, local_is_delete = 0, local_edited_time = ?
 		WHERE note_id = ?
 	`, notebookID, time.Now().Unix(), noteID)
 	return err
@@ -433,7 +480,7 @@ func (d *Database) MoveNote(noteID, notebookID string) error {
 
 func (d *Database) StarNote(noteID string) error {
 	_, err := d.db.Exec(`
-		UPDATE notes SET is_star = CASE WHEN is_star = 1 THEN 0 ELSE 1 END, is_dirty = 1, updated_time = ?
+		UPDATE notes SET is_star = CASE WHEN is_star = 1 THEN 0 ELSE 1 END, is_dirty = 1, local_edited_time = ?
 		WHERE note_id = ?
 	`, time.Now().Unix(), noteID)
 	return err
@@ -444,7 +491,7 @@ func (d *Database) SetStar(noteID string, starred bool) error {
 	if starred {
 		value = 1
 	}
-	_, err := d.db.Exec(`UPDATE notes SET is_star = ?, is_dirty = 1, updated_time = ? WHERE note_id = ?`, value, time.Now().Unix(), noteID)
+	_, err := d.db.Exec(`UPDATE notes SET is_star = ?, is_dirty = 1, local_edited_time = ? WHERE note_id = ?`, value, time.Now().Unix(), noteID)
 	return err
 }
 
@@ -515,16 +562,17 @@ func (d *Database) UpdateNoteAfterSync(note *models.Note, isAdd bool) error {
 	_, err := d.db.Exec(`
 		UPDATE notes SET
 			server_note_id = ?, usn = ?, title = ?, tags = ?, is_star = ?,
-			is_dirty = 0, local_is_new = 0, local_is_delete = 0, content_is_dirty = 0, init_sync = 0, err = ''
+			is_dirty = 0, local_is_new = 0, local_is_delete = 0, content_is_dirty = 0, init_sync = 0, err = '',
+			updated_time = COALESCE(?, updated_time)
 		WHERE note_id = ?
-	`, note.ServerNoteID, note.Usn, note.Title, string(tagsJSON), note.IsStar, note.NoteID)
+	`, note.ServerNoteID, note.Usn, note.Title, string(tagsJSON), note.IsStar, noteTime(note.UpdatedTime), note.NoteID)
 	return err
 }
 
 func (d *Database) scanNote(row *sql.Row) (*models.Note, error) {
 	var note models.Note
 	var tagsJSON string
-	var createdTime, updatedTime, conflictTime sql.NullInt64
+	var createdTime, updatedTime, conflictTime, localEditedTime sql.NullInt64
 
 	err := row.Scan(
 		&note.ID, &note.NoteID, &note.ServerNoteID, &note.NotebookID, &note.UserID,
@@ -532,7 +580,7 @@ func (d *Database) scanNote(row *sql.Row) (*models.Note, error) {
 		&note.IsMarkdown, &note.IsTrash, &note.IsBlog, &note.IsStar, &note.Usn,
 		&note.IsDirty, &note.ContentIsDirty, &note.LocalIsNew, &note.LocalIsDelete, &note.InitSync,
 		&note.ConflictNoteID, &conflictTime, &note.ConflictFixed, &note.Err,
-		&createdTime, &updatedTime,
+		&createdTime, &updatedTime, &localEditedTime,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -547,6 +595,10 @@ func (d *Database) scanNote(row *sql.Row) (*models.Note, error) {
 	if createdTime.Valid {
 		t := utils.UnixToTime(createdTime.Int64)
 		note.CreatedTime = &t
+	}
+	if localEditedTime.Valid {
+		t := utils.UnixToTime(localEditedTime.Int64)
+		note.LocalEditedTime = &t
 	}
 	if updatedTime.Valid {
 		t := utils.UnixToTime(updatedTime.Int64)
@@ -565,7 +617,7 @@ func (d *Database) scanNotes(rows *sql.Rows) ([]*models.Note, error) {
 	for rows.Next() {
 		var note models.Note
 		var tagsJSON string
-		var createdTime, updatedTime, conflictTime sql.NullInt64
+		var createdTime, updatedTime, conflictTime, localEditedTime sql.NullInt64
 
 		err := rows.Scan(
 			&note.ID, &note.NoteID, &note.ServerNoteID, &note.NotebookID, &note.UserID,
@@ -573,7 +625,7 @@ func (d *Database) scanNotes(rows *sql.Rows) ([]*models.Note, error) {
 			&note.IsMarkdown, &note.IsTrash, &note.IsBlog, &note.IsStar, &note.Usn,
 			&note.IsDirty, &note.ContentIsDirty, &note.LocalIsNew, &note.LocalIsDelete, &note.InitSync,
 			&note.ConflictNoteID, &conflictTime, &note.ConflictFixed, &note.Err,
-			&createdTime, &updatedTime,
+			&createdTime, &updatedTime, &localEditedTime,
 		)
 		if err != nil {
 			return nil, err
@@ -585,6 +637,10 @@ func (d *Database) scanNotes(rows *sql.Rows) ([]*models.Note, error) {
 		if createdTime.Valid {
 			t := utils.UnixToTime(createdTime.Int64)
 			note.CreatedTime = &t
+		}
+		if localEditedTime.Valid {
+			t := utils.UnixToTime(localEditedTime.Int64)
+			note.LocalEditedTime = &t
 		}
 		if updatedTime.Valid {
 			t := utils.UnixToTime(updatedTime.Int64)
@@ -622,10 +678,11 @@ func (d *Database) CopyNoteForConflict(noteID string) (*models.Note, error) {
 		// resolver. Keep the local edit as an ordinary new note and allow the
 		// second push pass to upload it automatically instead of leaving the
 		// client permanently dirty.
-		ConflictFixed: true,
-		InitSync:      false,
-		CreatedTime:   original.CreatedTime,
-		UpdatedTime:   original.UpdatedTime,
+		ConflictFixed:   true,
+		InitSync:        false,
+		CreatedTime:     original.CreatedTime,
+		UpdatedTime:     original.UpdatedTime,
+		LocalEditedTime: original.LocalEditedTime,
 	}
 
 	t := time.Now()
