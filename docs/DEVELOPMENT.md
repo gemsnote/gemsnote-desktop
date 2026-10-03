@@ -27,6 +27,16 @@ SQLite schema v3 新增 `local_edited_time`（bridge 字段 `LocalEditedTime`）
 
 ## 目录与依赖
 
+Desktop 是独立仓库，不包含在服务端源码或 Release 包内，也不是服务端的 Git
+submodule。在服务端源码根目录执行以下命令取得客户端源码（目标目录不存在时）：
+
+```bash
+git clone https://github.com/gemsnote/gemsnote-desktop.git desktop-app
+```
+
+已有检出时不要覆盖目录；选择与服务端共享前端匹配的代码版本。服务端 `.gitignore`
+忽略嵌套的 `desktop-app/`，两个仓库分别维护提交。
+
 开发目录建议保持如下布局：
 
 ```text
@@ -52,6 +62,9 @@ sudo apt-get install build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-d
 
 ## 本地开发
 
+桌面界面及与 Web 的差异见 [桌面 UI 约定](UI.md)。本地笔记本移动 bridge 接收本地
+笔记本 ID，标记 dirty，上传时转换为服务端 ID；不要把本地 ID 直接发送给服务端接口。
+
 在 `desktop-app` 目录执行：
 
 ```bash
@@ -62,13 +75,18 @@ wails dev
 
 `build-frontend.sh` 会构建主仓库 Vue 前端，并复制到 `desktop-app/frontend/dist`。`wails dev` 和正式构建都会通过 `wails.json` 的前端钩子准备资源；如果直接运行 `go test ./...`，也必须确保 `frontend/dist` 已存在，因为 `main.go` 使用了 Go `embed`。
 
+仅编译基础应用可在本目录执行 `wails build`，输出通常位于 `build/bin/`，应用图标来自
+`build/appicon.png`。正式 AppImage、DMG、NSIS 安装包使用本仓库发布脚本，见
+[Release 构建说明](RELEASE.md)，不要使用服务端的 `scripts/build-release.sh`。
+
 ## 架构约定
 
-- 新的服务端请求统一使用 `/api2` 和 JSON 契约，不得重新引入旧 `/api`。
+- 历史查询由 `webapi/local.go` 的 `listHistories` 优先调用远程历史接口，失败时读取 SQLite 中的本地编辑历史；远程查询结果不在此流程落库，不应把本地历史当作服务端完整镜像。共享笔记历史查询当前返回不支持。
+- 新的服务端请求统一使用 `/api2`，编码遵循各端点合同，不得重新引入旧 `/api`。JSON、表单和 multipart 不能互换；当前同步笔记写入仍使用表单，详见[服务端 API2](https://github.com/gemsnote/gemsnote/blob/main/docs/development/API2.md)。
 - 本地 bridge 负责 SQLite 中的笔记、笔记本、标签、附件和同步队列，保证离线使用。
 - 服务端专属功能通过 API2 代理；登录必须在线验证，注销清除本地登录状态但保留缓存。
 - 同步使用服务端 ID，不能把本地 SQLite 自增键当作服务端资源 ID。
-- 本地 SQLite 数据库位于平台默认 Gemsnote 数据目录，结构迁移由 `db/migrations.sql` 管理。
+- 本地 SQLite 数据库位于平台默认 Gemsnote 数据目录；`db/migrations.sql` 提供基础结构，`db/db.go` 按 `PRAGMA user_version` 执行 v2/v3 等增量迁移。修改结构时需同时检查两者及升级测试。
 
 “关于”通过本地 `GET /api2/desktop/about` 获取当前客户端的版本、平台、架构和 Go 运行时，不依赖远程服务端或 `window.go` 绑定。该端点只属于 desktop bridge。
 
@@ -105,16 +123,16 @@ npm run test:desktop-ui
 Wails GUI 构建依赖宿主系统原生工具链，不能用 `GOOS`/`GOARCH` 在其他系统交叉构建。Linux/macOS 使用：
 
 ```bash
-scripts/build-release.sh 1.0.0
+scripts/build-release.sh
 ```
 
 Windows PowerShell 使用：
 
 ```powershell
-.\scripts\build-release.ps1 -Version 1.0.0
+.\scripts\build-release.ps1
 ```
 
-脚本会检查版本、依赖、前端资源和测试，然后生成对应平台安装包。完整的平台、图标、AppImage runtime、NSIS 和 GitHub Actions 说明见 [Release 构建说明](RELEASE.md)。
+脚本直接读取 `api/version.go` 中的 `ClientVersion`，无需传入版本号，并检查版本格式、依赖、前端资源和测试，然后生成对应平台安装包。Bash 和 PowerShell 发布脚本均在 Go 测试前调用 `build-frontend.sh`，自动准备最新的嵌入资源，干净检出无需手动预构建。完整的平台、图标、AppImage runtime、NSIS 和无 `v` 标签发布说明见 [Release 构建说明](RELEASE.md)。
 
 安装包的显示名称按系统语言本地化：中文系统显示“珠玑笔记”，其它语言显示 “Gemsnote”；可执行文件名、数据目录名和内部包标识始终保持 `gemsnote`，避免升级和数据迁移受到影响。
 

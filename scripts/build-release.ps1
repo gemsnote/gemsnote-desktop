@@ -1,8 +1,11 @@
+<#
+.SYNOPSIS
+Build a native Windows release using ClientVersion from api/version.go.
+.EXAMPLE
+./scripts/build-release.ps1 -OutputDir C:\release
+#>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true, Position = 0)]
-    [string]$Version,
-
     [ValidateSet("windows")]
     [string]$Platform = "windows",
 
@@ -13,13 +16,17 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = $Version.TrimStart("v")
-if ($Version -notmatch '^\d+\.\d+\.\d+$') {
-    throw "Version must use MAJOR.MINOR.PATCH format"
-}
-
 $DesktopDir = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $SourceRoot = (Resolve-Path (Join-Path $DesktopDir "..")).Path
+$VersionFile = Join-Path $DesktopDir "api\version.go"
+$VersionMatches = @(Select-String -Path $VersionFile -Pattern '^const ClientVersion = "([^"]*)"$')
+if ($VersionMatches.Count -ne 1) {
+    throw "Expected exactly one ClientVersion in $VersionFile"
+}
+$Version = $VersionMatches[0].Matches[0].Groups[1].Value
+if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+    throw "Invalid ClientVersion in $VersionFile (expected MAJOR.MINOR.PATCH)"
+}
 if (-not $OutputDir) {
     $OutputDir = Join-Path $DesktopDir "release"
 }
@@ -61,13 +68,6 @@ if (-not (Test-Path -PathType Leaf (Join-Path $DesktopDir "build\windows\icon.ic
     throw "Windows application icon not found at $(Join-Path $DesktopDir 'build\windows\icon.ico')"
 }
 
-$VersionFile = Join-Path $DesktopDir "api\version.go"
-$VersionMatch = Select-String -Path $VersionFile -Pattern '^const ClientVersion = "([^"]*)"$'
-$ClientVersion = if ($VersionMatch) { $VersionMatch.Matches[0].Groups[1].Value } else { "" }
-if ($ClientVersion -ne $Version) {
-    throw "Requested version $Version does not match api.ClientVersion $(if ($ClientVersion) { $ClientVersion } else { '<missing>' })"
-}
-
 $WailsVersion = (& wails version 2>&1 | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $WailsVersion -notmatch '(^|[^0-9])v?2\.12\.0([^0-9]|$)') {
     throw "Wails CLI v2.12.0 is required; got: $WailsVersion"
@@ -79,8 +79,8 @@ New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
 & npm test --prefix (Join-Path $SourceRoot "frontend") -- --run
 if ($LASTEXITCODE -ne 0) { throw "frontend tests failed" }
-& npm run build --prefix (Join-Path $SourceRoot "frontend")
-if ($LASTEXITCODE -ne 0) { throw "frontend build failed" }
+& bash (Join-Path $DesktopDir "build-frontend.sh")
+if ($LASTEXITCODE -ne 0) { throw "frontend preparation failed" }
 
 Push-Location $DesktopDir
 try {

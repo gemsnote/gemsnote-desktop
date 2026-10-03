@@ -49,43 +49,9 @@ func getDataPath() string {
 	}
 }
 
-// migrateLegacyData silently adopts the pre-rename "leanote" data directory so upgrades keep their local data.
-func migrateLegacyData(dataPath string) {
-	legacy := filepath.Join(filepath.Dir(dataPath), "leanote")
-	if _, err := os.Stat(filepath.Join(dataPath, "gemsnote.db")); err == nil {
-		return
-	}
-	if _, err := os.Stat(filepath.Join(legacy, "leanote.db")); err != nil {
-		return
-	}
-	_ = copyDir(legacy, dataPath)
-}
-
-func copyDir(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0755)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, data, 0644)
-	})
-}
-
 func main() {
 	dataPath := getDataPath()
 	os.MkdirAll(dataPath, 0755)
-	migrateLegacyData(dataPath)
 	dbPath := filepath.Join(dataPath, "gemsnote.db")
 
 	database, err := db.New(dbPath)

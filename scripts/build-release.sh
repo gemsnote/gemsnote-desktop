@@ -3,9 +3,10 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<EOF
-Usage: $0 <version> [linux|darwin] [amd64|arm64] [absolute-output-dir]
+Usage: $0 [linux|darwin] [amd64|arm64] [absolute-output-dir]
 
 Builds a release for the current host platform and architecture by default.
+Version is read from api/version.go (ClientVersion); no version argument is accepted.
 The optional output directory must be an absolute path.
 
 Environment (Linux AppImage only):
@@ -14,7 +15,7 @@ Environment (Linux AppImage only):
                          when appimagetool cannot download the runtime.
 
 Example:
-  APPIMAGE_RUNTIME_FILE=/absolute/path/to/runtime-x86_64 $0 1.0.0
+  APPIMAGE_RUNTIME_FILE=/absolute/path/to/runtime-x86_64 $0
 EOF
   exit "${1:-2}"
 }
@@ -23,14 +24,15 @@ if [[ $# -eq 1 && ( "$1" == "--help" || "$1" == "-h" ) ]]; then
   usage 0
 fi
 
-[[ $# -ge 1 && $# -le 4 ]] || usage
-
-version="${1#v}"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || usage
+[[ $# -le 3 ]] || usage
 
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 desktop_dir="$(cd "$script_dir/.." && pwd)"
 source_root="$(cd "$desktop_dir/.." && pwd)"
+version_file="$desktop_dir/api/version.go"
+[[ -f "$version_file" ]] || { echo "Version file not found: $version_file" >&2; exit 1; }
+version="$(sed -n 's/^const ClientVersion = "\([^"]*\)"/\1/p' "$version_file")"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid or missing ClientVersion in $version_file (expected MAJOR.MINOR.PATCH)" >&2; exit 1; }
 
 case "$(uname -s)" in
   Linux) host_platform="linux" ;;
@@ -44,9 +46,9 @@ case "$(uname -m)" in
   *) echo "Unsupported host architecture: $(uname -m)" >&2; exit 1 ;;
 esac
 
-platform="${2:-$host_platform}"
-arch="${3:-$host_arch}"
-output_dir="${4:-$desktop_dir/release}"
+platform="${1:-$host_platform}"
+arch="${2:-$host_arch}"
+output_dir="${3:-$desktop_dir/release}"
 
 [[ "$platform" == "linux" || "$platform" == "darwin" ]] || usage
 [[ "$arch" == "amd64" || "$arch" == "arm64" ]] || usage
@@ -105,12 +107,6 @@ fi
 [[ -f "$desktop_dir/build/appicon.png" ]] || { echo "Application icon not found: $desktop_dir/build/appicon.png" >&2; exit 1; }
 [[ -f "$desktop_dir/build/windows/icon.ico" ]] || { echo "Windows application icon not found: $desktop_dir/build/windows/icon.ico" >&2; exit 1; }
 
-client_version="$(sed -n 's/^const ClientVersion = "\([^"]*\)"/\1/p' "$desktop_dir/api/version.go")"
-if [[ -z "$client_version" || "$client_version" != "$version" ]]; then
-  echo "Requested version $version does not match api.ClientVersion ${client_version:-<missing>}" >&2
-  exit 1
-fi
-
 wails_version="$("$wails_bin" version 2>&1)"
 grep -Eq '(^|[^0-9])v?2\.12\.0([^0-9]|$)' <<<"$wails_version" || {
   echo "Wails CLI v2.12.0 is required; got: $wails_version" >&2
@@ -121,7 +117,7 @@ mkdir -p "$output_dir"
 
 npm ci --prefix "$source_root/frontend"
 npm test --prefix "$source_root/frontend" -- --run
-npm run build --prefix "$source_root/frontend"
+bash "$desktop_dir/build-frontend.sh"
 
 (cd "$desktop_dir" && go test ./...)
 (cd "$desktop_dir" && "$wails_bin" build -clean -platform "$platform/$arch")
