@@ -237,11 +237,8 @@ jobs:
         shell: bash
         working-directory: gemsnote/desktop-app
         run: |
-          resources="build/bin/gemsnote.app/Contents/Resources"
-          mkdir -p "$resources/en.lproj" "$resources/zh-Hans.lproj" "$resources/zh-Hant.lproj"
-          printf '%s\n' '"CFBundleDisplayName" = "Gemsnote";' '"CFBundleName" = "Gemsnote";' > "$resources/en.lproj/InfoPlist.strings"
-          printf '%s\n' '"CFBundleDisplayName" = "珠玑笔记";' '"CFBundleName" = "珠玑笔记";' > "$resources/zh-Hans.lproj/InfoPlist.strings"
-          cp "$resources/zh-Hans.lproj/InfoPlist.strings" "$resources/zh-Hant.lproj/InfoPlist.strings"
+          set -euo pipefail
+          bash scripts/prepare-macos-app.sh build/bin/gemsnote.app
           mkdir -p release
           hdiutil create -volname "Gemsnote ${{ needs.validate.outputs.version }}" -srcfolder build/bin/gemsnote.app -ov -format UDZO \
             "release/gemsnote-${{ needs.validate.outputs.version }}-${{ matrix.asset }}.dmg"

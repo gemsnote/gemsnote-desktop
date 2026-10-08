@@ -170,7 +170,29 @@ Linux 会同时生成带 `.desktop` 和图标的 ZIP 以及 AppImage；macOS 会
 
 安装后的显示名称按系统语言选择：中文系统显示“珠玑笔记”，其它语言显示 “Gemsnote”。Linux `.desktop`、macOS `InfoPlist.strings` 和 Windows NSIS 安装器均包含相应的本地化名称；可执行文件名仍为 `gemsnote`。
 
-macOS 发布给其他用户前还应完成应用签名和 Apple notarization；Windows 已生成 NSIS 安装包，正式分发可进一步增加 Authenticode 签名。这些签名材料不应写入仓库。
+macOS 本地发布脚本和 GitHub Actions 共用 `scripts/prepare-macos-app.sh`：
+先写入本地化资源，再重新进行 ad-hoc 签名，最后用 `codesign --verify --deep --strict`
+验证通过后才制作 DMG。不要在签名后修改 `.app` 内容；旧流程在 Wails 自签名后添加
+`InfoPlist.strings`，会破坏资源封印并导致“应用程序已损坏”。
+
+ad-hoc 签名只保证包内文件的签名完整性，不能代替 Developer ID 签名和 Apple notarization。
+目前工作流尚未配置后两项，浏览器下载的应用仍可能被 Gatekeeper 阻止。
+面向普通用户无额外放行步骤的分发，需要 Apple Developer ID 证书和公证凭据，
+在最终资源准备后签名、公证并装订票据；不能以关闭系统 Gatekeeper 代替发布修复。
+参见 [Apple 代码签名说明](https://developer.apple.com/library/archive/technotes/tn2206/)
+和 [Developer ID 分发说明](https://developer.apple.com/developer-id/)。
+
+对已下载版本，可先将应用复制到本地目录，再检查（路径按实际安装位置调整）：
+
+```sh
+codesign --verify --deep --strict --verbose=2 /Applications/gemsnote.app
+spctl --assess --type execute --verbose=4 /Applications/gemsnote.app
+```
+
+`a sealed resource is missing or invalid` 表示签名完整性损坏，应重新构建发布；
+单纯签名校验通过不代表 Gatekeeper、公证或真机运行已通过。旧版 DMG 不会随源码修改自动修复。
+
+Windows 已生成 NSIS 安装包，正式分发可进一步增加 Authenticode 签名。这些签名材料不应写入仓库。
 
 ## GitHub 自动发布
 

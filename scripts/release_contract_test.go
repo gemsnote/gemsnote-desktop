@@ -110,3 +110,74 @@ func TestStartupDoesNotAdoptLegacyCache(t *testing.T) {
 		t.Fatal("startup must not adopt legacy cache")
 	}
 }
+
+func TestMacOSPreparationSealsFinalResourcesAndFailsClosed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("macOS packaging uses Bash")
+	}
+	for _, failure := range []string{"", "sign", "verify"} {
+		t.Run("failure="+failure, func(t *testing.T) {
+			root := t.TempDir()
+			app := filepath.Join(root, "Gemsnote with spaces.app")
+			if err := os.MkdirAll(filepath.Join(app, "Contents", "MacOS"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(app, "Contents", "Info.plist"), []byte("fixture"), 0644); err != nil {
+				t.Fatal(err)
+			}
+			bin := filepath.Join(root, "bin")
+			if err := os.Mkdir(bin, 0755); err != nil {
+				t.Fatal(err)
+			}
+			stub := `#!/usr/bin/env bash
+set -eu
+app="${@: -1}"
+for locale in en zh-Hans zh-Hant; do
+  test -s "$app/Contents/Resources/$locale.lproj/InfoPlist.strings"
+done
+if [[ "$1" == --force ]]; then
+  [[ "$2" == --sign && "$3" == - && "$4" == --timestamp=none ]]
+  echo sign >> "$TEST_LOG"
+  [[ "$TEST_FAILURE" != sign ]] || exit 13
+else
+  [[ "$1" == --verify && "$2" == --deep && "$3" == --strict ]]
+  grep -q '^sign$' "$TEST_LOG"
+  echo verify >> "$TEST_LOG"
+  [[ "$TEST_FAILURE" != verify ]] || exit 14
+fi
+`
+			if err := os.WriteFile(filepath.Join(bin, "codesign"), []byte(stub), 0755); err != nil {
+				t.Fatal(err)
+			}
+			log := filepath.Join(root, "calls")
+			cmd := exec.Command("bash", "prepare-macos-app.sh", app)
+			cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "TEST_LOG="+log, "TEST_FAILURE="+failure)
+			out, err := cmd.CombinedOutput()
+			if (err != nil) != (failure != "") {
+				t.Fatalf("unexpected result: %v\n%s", err, out)
+			}
+			calls := read(t, log)
+			want := "sign\nverify\n"
+			if failure == "sign" {
+				want = "sign\n"
+			}
+			if calls != want {
+				t.Fatalf("calls = %q, want %q", calls, want)
+			}
+		})
+	}
+}
+
+func TestMacOSReleasePreparesSignatureBeforeDiskImage(t *testing.T) {
+	for _, path := range []string{"build-release.sh", "../.github/workflows/release.yml"} {
+		s := read(t, path)
+		prepare := strings.Index(s, "prepare-macos-app.sh")
+		dmg := strings.Index(s, "hdiutil create -volname")
+		if prepare < 0 || dmg < 0 || prepare >= dmg {
+			t.Fatalf("%s must verify the final app before creating a DMG", path)
+		}
+		if strings.Contains(s, "InfoPlist.strings") {
+			t.Fatalf("%s must not mutate localized resources outside the signing helper", path)
+		}
+	}
+}
