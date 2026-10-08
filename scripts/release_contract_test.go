@@ -150,8 +150,35 @@ fi
 				t.Fatal(err)
 			}
 			log := filepath.Join(root, "calls")
-			cmd := exec.Command("bash", "prepare-macos-app.sh", app)
-			cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "TEST_LOG="+log, "TEST_FAILURE="+failure)
+			// Model an old release checkout with no scripts directory. Only the
+			// separately checked-out workflow tooling provides the signing helper.
+			toolDir := filepath.Join(root, "release-tools", "scripts")
+			if err := os.MkdirAll(toolDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(toolDir, "prepare-macos-app.sh"), []byte(read(t, "prepare-macos-app.sh")), 0644); err != nil {
+				t.Fatal(err)
+			}
+			sourceDir := filepath.Join(root, "gemsnote", "desktop-app")
+			if err := os.MkdirAll(filepath.Join(sourceDir, "build", "bin"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(app, filepath.Join(sourceDir, "build", "bin", "gemsnote.app")); err != nil {
+				t.Fatal(err)
+			}
+			workflow := read(t, "../.github/workflows/release.yml")
+			var invocation string
+			for _, line := range strings.Split(workflow, "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "bash ") && strings.Contains(line, "prepare-macos-app.sh") {
+					invocation = strings.TrimSpace(line)
+				}
+			}
+			if invocation == "" {
+				t.Fatal("missing workflow helper invocation")
+			}
+			cmd := exec.Command("bash", "-euc", invocation)
+			cmd.Dir = sourceDir
+			cmd.Env = append(os.Environ(), "GITHUB_WORKSPACE="+root, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "TEST_LOG="+log, "TEST_FAILURE="+failure)
 			out, err := cmd.CombinedOutput()
 			if (err != nil) != (failure != "") {
 				t.Fatalf("unexpected result: %v\n%s", err, out)
@@ -179,5 +206,37 @@ func TestMacOSReleasePreparesSignatureBeforeDiskImage(t *testing.T) {
 		if strings.Contains(s, "InfoPlist.strings") {
 			t.Fatalf("%s must not mutate localized resources outside the signing helper", path)
 		}
+	}
+}
+
+func TestMacOSToolingUsesWorkflowRevisionInsteadOfReleaseTag(t *testing.T) {
+	s := read(t, "../.github/workflows/release.yml")
+	start := strings.Index(s, "      - name: Check out macOS release tooling\n")
+	if start < 0 {
+		t.Fatal("missing separate tooling checkout")
+	}
+	end := strings.Index(s[start+1:], "      - name:")
+	if end < 0 {
+		t.Fatal("missing following step")
+	}
+	step := s[start : start+1+end]
+	for _, required := range []string{
+		"if: matrix.archive == 'darwin'",
+		"uses: actions/checkout@v4",
+		"repository: ${{ github.repository }}",
+		"ref: ${{ github.workflow_sha }}",
+		"path: release-tools",
+		"sparse-checkout: scripts/prepare-macos-app.sh",
+		"sparse-checkout-cone-mode: false",
+	} {
+		if !strings.Contains(step, required) {
+			t.Errorf("tooling checkout missing %s", required)
+		}
+	}
+	if strings.Contains(step, "outputs.tag") {
+		t.Fatal("tooling must not come from release tag")
+	}
+	if !strings.Contains(s, "ref: ${{ needs.validate.outputs.tag }}") {
+		t.Fatal("application must still use release tag")
 	}
 }

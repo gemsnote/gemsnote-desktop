@@ -208,3 +208,12 @@ git push origin 1.0.0
 
 也可在 Actions 中手动指定已有的无 `v` 标签发布。新标签应指向包含新版工作流的提交；
 旧 `v` 标签不再触发此工作流，不必删除或移动。已有同名标签时不要重复创建或强行覆盖。
+
+手动重建旧 tag 时，应用源码和共享前端仍取指定 tag；macOS 打包辅助脚本单独从
+运行中的工作流提交（`github.workflow_sha`）检出到 `release-tools`，避免新版工作流
+调用旧 tag 中尚不存在的脚本。arm64/amd64 共用这个固定版本的脚本，仍在添加本地化资源后
+重新签名并严格校验，再创建 DMG；不需要移动旧 tag。
+
+如果遇到 `scripts/prepare-macos-app.sh: No such file or directory`，应先将此修复推送到
+用于手动运行工作流的分支，再从该分支新建一次 `workflow_dispatch` 运行，填入原发布 tag。
+不要只重跑原来的失败任务；原运行使用的工作流版本不包含此修复。

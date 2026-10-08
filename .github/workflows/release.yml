@@ -158,6 +158,25 @@ jobs:
           ref: ${{ needs.validate.outputs.tag }}
           fetch-depth: 0
 
+      # Manual releases may target tags older than the packaging helper.
+      # Pin tooling to the workflow revision while keeping application sources
+      # at the requested tag. Keep it outside the nested source checkouts.
+      - name: Check out macOS release tooling
+        if: matrix.archive == 'darwin'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.workflow_sha }}
+          path: release-tools
+          sparse-checkout: scripts/prepare-macos-app.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Validate macOS release tooling
+        if: matrix.archive == 'darwin'
+        shell: bash
+        run: test -f "$GITHUB_WORKSPACE/release-tools/scripts/prepare-macos-app.sh"
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -238,7 +257,7 @@ jobs:
         working-directory: gemsnote/desktop-app
         run: |
           set -euo pipefail
-          bash scripts/prepare-macos-app.sh build/bin/gemsnote.app
+          bash "$GITHUB_WORKSPACE/release-tools/scripts/prepare-macos-app.sh" build/bin/gemsnote.app
           mkdir -p release
           hdiutil create -volname "Gemsnote ${{ needs.validate.outputs.version }}" -srcfolder build/bin/gemsnote.app -ov -format UDZO \
             "release/gemsnote-${{ needs.validate.outputs.version }}-${{ matrix.asset }}.dmg"
