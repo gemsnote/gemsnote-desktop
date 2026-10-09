@@ -10,8 +10,8 @@ Version is read from api/version.go (ClientVersion); no version argument is acce
 The optional output directory must be an absolute path.
 
 Environment (macOS):
-  DMG_PYTHON            Python 3.10+ with scripts/dmg-requirements.txt installed.
-                       Defaults to python3.
+  DMG_PYTHON            Optional Python 3.10+ environment with DMG dependencies.
+                       Unset: automatically prepare build/dmg-venv.
 
 Environment (Linux AppImage only):
   APPIMAGE_RUNTIME_FILE  Path to a downloaded Type 2 runtime file. Use
@@ -81,11 +81,7 @@ wails_bin="$HOME/go/bin/wails"
   exit 1
 }
 if [[ "$platform" == "darwin" ]]; then
-  dmg_python="${DMG_PYTHON:-python3}"
-  "$dmg_python" -c 'import dmgbuild' || {
-    echo "Install scripts/dmg-requirements.txt using Python 3.10+ and set DMG_PYTHON to that interpreter." >&2
-    exit 1
-  }
+  dmg_python="$(bash "$script_dir/prepare-dmg-python.sh")"
   command -v hdiutil >/dev/null 2>&1 || { echo "Required tool not found: hdiutil" >&2; exit 1; }
   command -v shasum >/dev/null 2>&1 || { echo "Required tool not found: shasum" >&2; exit 1; }
 else

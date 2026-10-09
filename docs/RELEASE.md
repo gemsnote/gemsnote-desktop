@@ -225,13 +225,17 @@ git push origin 1.0.0
 用户将应用拖到 Applications 即可安装。背景与 `.DS_Store` 位于卷中，不修改已签名的应用包。
 采用 dmgbuild 直接写入 Finder 布局，无需 Finder/AppleScript 或构建机的图形登录会话。
 
-本地首次使用需准备 Python 3.10+ 虚拟环境（以下使用 Python 3.12）：
+本地需要安装 Python 3.10+。直接运行发布脚本即可，首次会自动建立
+`build/dmg-venv` 并安装固定版本的 DMG 依赖；后续依赖版本匹配时离线复用。
+会检测 PATH 中的 Python 和 Homebrew 的标准安装路径，跳过 macOS 自带的旧 Python。
+下载失败会明确报错，重新运行即可重试，不修改系统 Python。
 
 ```bash
-python3.12 -m venv /tmp/gemsnote-dmg-venv
-/tmp/gemsnote-dmg-venv/bin/python -m pip install -r scripts/dmg-requirements.txt
-DMG_PYTHON=/tmp/gemsnote-dmg-venv/bin/python bash scripts/build-release.sh darwin arm64
+bash scripts/build-release.sh darwin arm64
 ```
+
+如需使用自己管理的虚拟环境，可设置 `DMG_PYTHON=/绝对路径/venv/bin/python`，
+并提前在其中安装 `scripts/dmg-requirements.txt`；显式指定的环境只校验，不自动修改。
 
 Intel Mac 使用 `darwin amd64`。CI 自动安装固定版本依赖，所有 DMG 打包工具仍从工作流提交
 检出，旧应用 tag 无需包含这些新脚本。重新制作 DMG 后才能看到新的布局；签名和公证要求不变。

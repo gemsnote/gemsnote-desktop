@@ -11,6 +11,7 @@
 /frontend/wailsjs/
 /build/bin/
 /build/appimage/
+/build/dmg-venv/
 /release/
 /tmp
 
