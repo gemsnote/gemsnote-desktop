@@ -145,3 +145,17 @@ Windows PowerShell 使用：
 3. 新请求没有引用旧 `/api`；
 4. 没有把 SQLite 数据库、用户缓存、构建产物或密钥加入 Git；
 5. API、同步协议和本地数据库迁移与服务端兼容。
+
+## macOS 原生菜单语言
+
+Wails 2.12 的 App/Edit/Window 角色菜单使用硬编码英文，不会随 SPA 的语言设置自动翻译。
+`internal/nativemenu` 在 `OnDomReady` 后将翻译任务投递到 AppKit 主线程，读取
+`NSLocale.preferredLanguages` 的第一项：中文（`zh`，含简繁体及地区变体）使用简体中文菜单，
+其它语言或缺省使用英文。遵循 macOS 为当前进程提供的语言偏好（包括系统的应用专属语言设置），
+修改系统语言后需退出并重新启动；网页界面的 `SetLanguage` 不覆盖此原生菜单策略。
+
+翻译通过原生 selector 匹配“隐藏/退出/撤销/拷贝”等项目，并递归处理编辑、窗口和语音菜单，
+只替换标题，保留 Wails/AppKit 的 target、action、启用状态和快捷键。
+不重建菜单、不执行 JavaScript 编辑命令，不改动依赖中的 Wails 源码。
+Linux/Windows 使用空实现。macOS 的 Go 测试会编译原生菜单 fixture，验证语言优先级、
+重复调用及动作/快捷键保持；可用 `go test ./internal/nativemenu` 单独运行。

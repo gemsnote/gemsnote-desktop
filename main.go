@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -19,6 +20,7 @@ import (
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/gemsnote/gemsnote/db"
+	"github.com/gemsnote/gemsnote/internal/nativemenu"
 	"github.com/gemsnote/gemsnote/service"
 	"github.com/gemsnote/gemsnote/webapi"
 )
@@ -161,6 +163,7 @@ func main() {
 		},
 		BackgroundColour: &options.RGBA{R: 255, G: 255, B: 255, A: 1},
 		OnStartup:        app.startup,
+		OnDomReady:       func(context.Context) { nativemenu.Localize() },
 		OnShutdown:       app.shutdown,
 		Bind: []interface{}{
 			app,

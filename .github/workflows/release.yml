@@ -168,14 +168,27 @@ jobs:
           repository: ${{ github.repository }}
           ref: ${{ github.workflow_sha }}
           path: release-tools
-          sparse-checkout: scripts/prepare-macos-app.sh
-          sparse-checkout-cone-mode: false
+          sparse-checkout: scripts
           persist-credentials: false
 
       - name: Validate macOS release tooling
         if: matrix.archive == 'darwin'
         shell: bash
-        run: test -f "$GITHUB_WORKSPACE/release-tools/scripts/prepare-macos-app.sh"
+        run: |
+          test -f "$GITHUB_WORKSPACE/release-tools/scripts/prepare-macos-app.sh"
+          test -f "$GITHUB_WORKSPACE/release-tools/scripts/package-macos-dmg.py"
+
+      - name: Set up Python for macOS packaging
+        if: matrix.archive == 'darwin'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install macOS packaging dependencies
+        if: matrix.archive == 'darwin'
+        run: |
+          python -m pip install -r release-tools/scripts/dmg-requirements.txt
+          python -B -m unittest discover -s release-tools/scripts -p 'test_macos_dmg.py'
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -259,7 +272,8 @@ jobs:
           set -euo pipefail
           bash "$GITHUB_WORKSPACE/release-tools/scripts/prepare-macos-app.sh" build/bin/gemsnote.app
           mkdir -p release
-          hdiutil create -volname "Gemsnote ${{ needs.validate.outputs.version }}" -srcfolder build/bin/gemsnote.app -ov -format UDZO \
+          python "$GITHUB_WORKSPACE/release-tools/scripts/package-macos-dmg.py" \
+            build/bin/gemsnote.app "Gemsnote ${{ needs.validate.outputs.version }}" \
             "release/gemsnote-${{ needs.validate.outputs.version }}-${{ matrix.asset }}.dmg"
 
       - name: Package Windows application

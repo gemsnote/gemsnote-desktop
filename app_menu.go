@@ -15,8 +15,8 @@ func (a *App) MenuLanguage() string {
 	return "en-US"
 }
 
-// SetLanguage persists the SPA language. Gemsnote intentionally has no native
-// application menu; all commands live in the application UI.
+// SetLanguage persists the SPA language. The macOS native menu independently
+// follows the system preferred language when the application starts.
 func (a *App) SetLanguage(language string) {
 	if language != "zh-CN" && language != "en-US" {
 		return

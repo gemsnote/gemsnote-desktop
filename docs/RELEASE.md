@@ -217,3 +217,21 @@ git push origin 1.0.0
 如果遇到 `scripts/prepare-macos-app.sh: No such file or directory`，应先将此修复推送到
 用于手动运行工作流的分支，再从该分支新建一次 `workflow_dispatch` 运行，填入原发布 tag。
 不要只重跑原来的失败任务；原运行使用的工作流版本不包含此修复。
+
+### macOS 拖拽安装 DMG
+
+本地和 CI 共用 `scripts/package-macos-dmg.py`：卷中左侧为 Gemsnote 应用，右侧为
+指向系统 `/Applications` 的链接，中间背景绘制向右箭头。Finder 默认打开固定大小的图标视图，
+用户将应用拖到 Applications 即可安装。背景与 `.DS_Store` 位于卷中，不修改已签名的应用包。
+采用 dmgbuild 直接写入 Finder 布局，无需 Finder/AppleScript 或构建机的图形登录会话。
+
+本地首次使用需准备 Python 3.10+ 虚拟环境（以下使用 Python 3.12）：
+
+```bash
+python3.12 -m venv /tmp/gemsnote-dmg-venv
+/tmp/gemsnote-dmg-venv/bin/python -m pip install -r scripts/dmg-requirements.txt
+DMG_PYTHON=/tmp/gemsnote-dmg-venv/bin/python bash scripts/build-release.sh darwin arm64
+```
+
+Intel Mac 使用 `darwin amd64`。CI 自动安装固定版本依赖，所有 DMG 打包工具仍从工作流提交
+检出，旧应用 tag 无需包含这些新脚本。重新制作 DMG 后才能看到新的布局；签名和公证要求不变。

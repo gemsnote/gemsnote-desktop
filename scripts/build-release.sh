@@ -9,6 +9,10 @@ Builds a release for the current host platform and architecture by default.
 Version is read from api/version.go (ClientVersion); no version argument is accepted.
 The optional output directory must be an absolute path.
 
+Environment (macOS):
+  DMG_PYTHON            Python 3.10+ with scripts/dmg-requirements.txt installed.
+                       Defaults to python3.
+
 Environment (Linux AppImage only):
   APPIMAGE_RUNTIME_FILE  Path to a downloaded Type 2 runtime file. Use
                          runtime-x86_64 on amd64 or runtime-aarch64 on arm64
@@ -77,6 +81,11 @@ wails_bin="$HOME/go/bin/wails"
   exit 1
 }
 if [[ "$platform" == "darwin" ]]; then
+  dmg_python="${DMG_PYTHON:-python3}"
+  "$dmg_python" -c 'import dmgbuild' || {
+    echo "Install scripts/dmg-requirements.txt using Python 3.10+ and set DMG_PYTHON to that interpreter." >&2
+    exit 1
+  }
   command -v hdiutil >/dev/null 2>&1 || { echo "Required tool not found: hdiutil" >&2; exit 1; }
   command -v shasum >/dev/null 2>&1 || { echo "Required tool not found: shasum" >&2; exit 1; }
 else
@@ -171,7 +180,7 @@ else
   bash "$script_dir/prepare-macos-app.sh" "$app"
   archive="$output_dir/$asset.dmg"
   rm -f "$archive"
-  hdiutil create -volname "Gemsnote $version" -srcfolder "$app" -ov -format UDZO "$archive" >/dev/null
+  "$dmg_python" "$script_dir/package-macos-dmg.py" "$app" "Gemsnote $version" "$archive"
 fi
 
 checksum_file="$output_dir/SHA256SUMS"

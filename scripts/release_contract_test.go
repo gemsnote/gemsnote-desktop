@@ -199,7 +199,7 @@ func TestMacOSReleasePreparesSignatureBeforeDiskImage(t *testing.T) {
 	for _, path := range []string{"build-release.sh", "../.github/workflows/release.yml"} {
 		s := read(t, path)
 		prepare := strings.Index(s, "prepare-macos-app.sh")
-		dmg := strings.Index(s, "hdiutil create -volname")
+		dmg := strings.LastIndex(s, "package-macos-dmg.py")
 		if prepare < 0 || dmg < 0 || prepare >= dmg {
 			t.Fatalf("%s must verify the final app before creating a DMG", path)
 		}
@@ -226,8 +226,7 @@ func TestMacOSToolingUsesWorkflowRevisionInsteadOfReleaseTag(t *testing.T) {
 		"repository: ${{ github.repository }}",
 		"ref: ${{ github.workflow_sha }}",
 		"path: release-tools",
-		"sparse-checkout: scripts/prepare-macos-app.sh",
-		"sparse-checkout-cone-mode: false",
+		"sparse-checkout: scripts",
 	} {
 		if !strings.Contains(step, required) {
 			t.Errorf("tooling checkout missing %s", required)
