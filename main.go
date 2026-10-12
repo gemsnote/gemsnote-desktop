@@ -185,7 +185,9 @@ func main() {
 			Icon:        appIcon,
 		},
 		Mac: &mac.Options{
-			TitleBar: mac.TitleBarHiddenInset(),
+			// The shared frontend uses the entire webview viewport. Keep the
+			// native title bar separate so window controls cannot overlap it.
+			TitleBar: mac.TitleBarDefault(),
 		},
 	})
 
