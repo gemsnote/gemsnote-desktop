@@ -226,6 +226,8 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) bool {
 		h.moveNote(w, r)
 	case path == "/api2/note/copyNote":
 		h.copyNote(w, r)
+	case path == "/api2/note/copySharedNote":
+		h.copySharedNote(w, r)
 	case path == "/api2/noteContentHistory/listHistories":
 		h.listHistories(w, r)
 	case path == "/api2/attach/getAttachs":

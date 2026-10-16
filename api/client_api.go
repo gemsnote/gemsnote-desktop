@@ -581,6 +581,7 @@ func (c *Client) UpdateNote(note *models.Note) (*models.Note, error) {
 		"IsBlog":     note.IsBlog,
 		"IsStar":     note.IsStar,
 		"Tags":       note.Tags,
+		"ClearTags":  len(note.Tags) == 0,
 		"Files":      note.Files,
 		"FileDatas":  note.FileDatas,
 	}

@@ -1,6 +1,7 @@
 package webapi
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -781,6 +782,52 @@ func (h *Handler) copyNote(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.writeJSON(w, map[string]any{"Ok": true, "Item": copied})
+}
+
+func (h *Handler) copySharedNote(w http.ResponseWriter, r *http.Request) {
+	user := h.requireUser(w)
+	if user == nil {
+		return
+	}
+	if user.Host == "" || h.Proxy == nil || !h.Proxy.ensureSession() {
+		h.fail(w, "offline")
+		return
+	}
+	targetID := h.form(r, "notebookId")
+	if h.ownedNotebook(user.ID, targetID) == nil {
+		h.fail(w, "invalidNotebook")
+		return
+	}
+	form := url.Values{
+		"notebookId": {targetID},
+		"fromUserId": {h.form(r, "fromUserId")},
+	}
+	for index, noteID := range formList(r, "noteIds") {
+		form.Set(fmt.Sprintf("noteIds[%d]", index), noteID)
+	}
+	data, contentType, status, err := h.Proxy.call(http.MethodPost, "/api2/note/copySharedNote", form, nil)
+	if err != nil || status < 200 || status >= 300 {
+		h.fail(w, "copySharedFailed")
+		return
+	}
+	var response struct {
+		Ok bool `json:"Ok"`
+	}
+	if json.Unmarshal(data, &response) != nil || !response.Ok {
+		h.fail(w, "copySharedFailed")
+		return
+	}
+	if h.OnSync != nil {
+		if _, err := h.OnSync(); err != nil {
+			h.fail(w, err.Error())
+			return
+		}
+	}
+	if contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(data)
 }
 
 func (h *Handler) listHistories(w http.ResponseWriter, r *http.Request) {

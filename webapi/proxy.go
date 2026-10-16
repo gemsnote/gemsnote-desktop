@@ -274,6 +274,8 @@ func (p *ServerProxy) fetchHistories(noteID string) ([]map[string]any, bool) {
 			"Id":          meta.ID,
 			"UpdatedTime": timeOrNow(&contentResponse.Item.UpdatedTime),
 			"Content":     normalizeContent(contentResponse.Item.Content),
+			"IsMarkdown":  meta.IsMarkdown,
+			"Files":       meta.Files,
 		})
 	}
 	return items, true

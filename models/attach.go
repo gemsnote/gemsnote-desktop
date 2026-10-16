@@ -10,10 +10,12 @@ import (
 type HistoryMeta struct {
 	// ID is a stable identifier for this history version. It is preferred over
 	// Index, which can change when a newer version is inserted.
-	ID            string    `json:"Id,omitempty"`
-	Index         int       `json:"Index"`
-	UpdatedUserID string    `json:"UpdatedUserId"`
-	UpdatedTime   time.Time `json:"UpdatedTime"`
+	ID            string     `json:"Id,omitempty"`
+	Index         int        `json:"Index"`
+	UpdatedUserID string     `json:"UpdatedUserId"`
+	UpdatedTime   time.Time  `json:"UpdatedTime"`
+	IsMarkdown    bool       `json:"IsMarkdown"`
+	Files         []*FileRef `json:"Files,omitempty"`
 }
 
 // UnmarshalJSON accepts both the Gemsnote Id spelling and the more explicit
@@ -38,10 +40,12 @@ func (h *HistoryMeta) UnmarshalJSON(data []byte) error {
 }
 
 type HistoryEntry struct {
-	ID            string    `json:"Id,omitempty"`
-	UpdatedUserID string    `json:"UpdatedUserId"`
-	UpdatedTime   time.Time `json:"UpdatedTime"`
-	Content       string    `json:"Content"`
+	ID            string     `json:"Id,omitempty"`
+	UpdatedUserID string     `json:"UpdatedUserId"`
+	UpdatedTime   time.Time  `json:"UpdatedTime"`
+	Content       string     `json:"Content"`
+	IsMarkdown    bool       `json:"IsMarkdown"`
+	Files         []*FileRef `json:"Files,omitempty"`
 }
 
 func (h *HistoryEntry) UnmarshalJSON(data []byte) error {
