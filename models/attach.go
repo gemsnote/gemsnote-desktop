@@ -16,6 +16,7 @@ type HistoryMeta struct {
 	UpdatedTime   time.Time  `json:"UpdatedTime"`
 	IsMarkdown    bool       `json:"IsMarkdown"`
 	Files         []*FileRef `json:"Files,omitempty"`
+	FilesComplete bool       `json:"FilesComplete"`
 }
 
 // UnmarshalJSON accepts both the Gemsnote Id spelling and the more explicit
@@ -46,6 +47,7 @@ type HistoryEntry struct {
 	Content       string     `json:"Content"`
 	IsMarkdown    bool       `json:"IsMarkdown"`
 	Files         []*FileRef `json:"Files,omitempty"`
+	FilesComplete bool       `json:"FilesComplete"`
 }
 
 func (h *HistoryEntry) UnmarshalJSON(data []byte) error {
@@ -92,8 +94,11 @@ type Image struct {
 }
 
 type NoteHistory struct {
-	ID          int64      `json:"_id"`
-	NoteID      string     `json:"NoteId"`
-	Content     string     `json:"Content"`
-	UpdatedTime *time.Time `json:"UpdatedTime"`
+	IsMarkdown    *bool      `json:"IsMarkdown,omitempty"`
+	Attachments   []*Attach  `json:"-"`
+	FilesComplete bool       `json:"FilesComplete"`
+	ID            int64      `json:"_id"`
+	NoteID        string     `json:"NoteId"`
+	Content       string     `json:"Content"`
+	UpdatedTime   *time.Time `json:"UpdatedTime"`
 }

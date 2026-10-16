@@ -2,6 +2,8 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/gemsnote/gemsnote/models"
@@ -231,18 +233,27 @@ func (d *Database) DeleteAttachsByNote(noteID string) error {
 }
 
 func (d *Database) InsertNoteHistory(history *models.NoteHistory) error {
+	var attachments any
+	if history.FilesComplete || history.Attachments != nil {
+		encoded, err := json.Marshal(history.Attachments)
+		if err != nil {
+			return err
+		}
+		attachments = string(encoded)
+	}
+
 	_, err := d.db.Exec(`
-		INSERT INTO note_histories (note_id, content, updated_time)
-		VALUES (?, ?, ?)
-	`, history.NoteID, history.Content, utils.TimeToUnix(history.UpdatedTime))
+		INSERT INTO note_histories (note_id, content, updated_time, is_markdown, attachments_json, files_complete)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, history.NoteID, history.Content, utils.TimeToUnix(history.UpdatedTime), history.IsMarkdown, attachments, history.FilesComplete)
 	return err
 }
 
 func (d *Database) GetNoteHistories(noteID string) ([]*models.NoteHistory, error) {
 	rows, err := d.db.Query(`
-		SELECT _id, note_id, content, updated_time
+		SELECT _id, note_id, content, updated_time, is_markdown, attachments_json, files_complete
 		FROM note_histories WHERE note_id = ?
-		ORDER BY updated_time DESC
+		ORDER BY updated_time DESC, _id DESC
 		LIMIT 20
 	`, noteID)
 	if err != nil {
@@ -254,13 +265,24 @@ func (d *Database) GetNoteHistories(noteID string) ([]*models.NoteHistory, error
 	for rows.Next() {
 		var h models.NoteHistory
 		var updatedTime sql.NullInt64
+		var markdown sql.NullBool
+		var attachments sql.NullString
 
-		if err := rows.Scan(&h.ID, &h.NoteID, &h.Content, &updatedTime); err != nil {
+		if err := rows.Scan(&h.ID, &h.NoteID, &h.Content, &updatedTime, &markdown, &attachments, &h.FilesComplete); err != nil {
 			return nil, err
 		}
 		if updatedTime.Valid {
 			t := utils.UnixToTime(updatedTime.Int64)
 			h.UpdatedTime = &t
+		}
+		if markdown.Valid {
+			value := markdown.Bool
+			h.IsMarkdown = &value
+		}
+		if attachments.Valid {
+			if err := json.Unmarshal([]byte(attachments.String), &h.Attachments); err != nil {
+				return nil, err
+			}
 		}
 		histories = append(histories, &h)
 	}
@@ -288,12 +310,23 @@ func (d *Database) SetConfig(key, value string) error {
 }
 
 func (d *Database) AddNoteHistory(noteID, content string) error {
-	d.DeleteOldNoteHistories(noteID, 19)
+	n, err := d.GetNote(noteID)
+	if err != nil || n == nil {
+		return fmt.Errorf("historyNoteMissing")
+	}
+	attachments, err := d.GetAttachsByNote(noteID)
+	if err != nil {
+		return err
+	}
+	if err := d.DeleteOldNoteHistories(noteID, 19); err != nil {
+		return err
+	}
 
 	now := time.Now()
 	history := &models.NoteHistory{
-		NoteID:      noteID,
-		Content:     content,
+		NoteID:     noteID,
+		Content:    content,
+		IsMarkdown: &n.IsMarkdown, Attachments: attachments, FilesComplete: n.ServerNoteID == "",
 		UpdatedTime: &now,
 	}
 	return d.InsertNoteHistory(history)
@@ -303,7 +336,7 @@ func (d *Database) DeleteOldNoteHistories(noteID string, keepCount int) error {
 	_, err := d.db.Exec(`
 		DELETE FROM note_histories 
 		WHERE note_id = ? AND _id NOT IN (
-			SELECT _id FROM note_histories WHERE note_id = ? ORDER BY updated_time DESC LIMIT ?
+			SELECT _id FROM note_histories WHERE note_id = ? ORDER BY updated_time DESC, _id DESC LIMIT ?
 		)
 	`, noteID, noteID, keepCount)
 	return err

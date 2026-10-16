@@ -836,3 +836,35 @@ func TestForcedLogoutKeepsPendingCacheAndClearsSession(t *testing.T) {
 		t.Fatalf("cached server identity was not retained: user=%+v err=%v", stored, err)
 	}
 }
+
+func TestLocalHistoryRestoreRoute(t *testing.T) {
+	e := newTestEnv(t)
+	user, book := e.login(t)
+	noteID := utils.ObjectId()
+	n := &models.Note{ID: utils.ObjectId(), NoteID: noteID, UserID: user, NotebookID: book, Content: "historical", IsMarkdown: true}
+	if err := e.db.InsertNote(n); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.db.AddNoteHistory(noteID, n.Content); err != nil {
+		t.Fatal(err)
+	}
+	n.Content = "current"
+	n.IsMarkdown = false
+	if err := e.db.UpdateNote(n); err != nil {
+		t.Fatal(err)
+	}
+	var histories []map[string]any
+	e.postJSON(t, "/api2/noteContentHistory/listHistories", url.Values{"noteId": {noteID}}, &histories)
+	if len(histories) != 1 || histories[0]["FilesComplete"] != true || histories[0]["IsMarkdown"] != true {
+		t.Fatal(histories)
+	}
+	var response map[string]any
+	e.postJSON(t, "/api2/noteContentHistory/restore", url.Values{"noteId": {noteID}, "historyId": {histories[0]["Id"].(string)}}, &response)
+	if response["Ok"] != true {
+		t.Fatal(response)
+	}
+	n, err := e.db.GetNote(noteID)
+	if err != nil || n.Content != "historical" || !n.IsMarkdown {
+		t.Fatalf("%+v %v", n, err)
+	}
+}

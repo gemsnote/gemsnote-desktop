@@ -271,11 +271,12 @@ func (p *ServerProxy) fetchHistories(noteID string) ([]map[string]any, bool) {
 			return nil, false
 		}
 		items = append(items, map[string]any{
-			"Id":          meta.ID,
-			"UpdatedTime": timeOrNow(&contentResponse.Item.UpdatedTime),
-			"Content":     normalizeContent(contentResponse.Item.Content),
-			"IsMarkdown":  meta.IsMarkdown,
-			"Files":       meta.Files,
+			"Id":            meta.ID,
+			"UpdatedTime":   timeOrNow(&contentResponse.Item.UpdatedTime),
+			"Content":       normalizeContent(contentResponse.Item.Content),
+			"IsMarkdown":    meta.IsMarkdown,
+			"Files":         meta.Files,
+			"FilesComplete": meta.FilesComplete,
 		})
 	}
 	return items, true

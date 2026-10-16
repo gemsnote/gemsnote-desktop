@@ -180,6 +180,12 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 			if err := s.processNoteSync(note, syncInfo, afterUsn < 0); err != nil {
 				return fmt.Errorf("process remote note %s: %w", note.NoteID, err)
 			}
+			if !withContentSnapshot && !note.IsDeleted && note.Files != nil {
+				if err := s.syncAttachmentSet(note); err != nil {
+					return err
+				}
+			}
+
 			if withContentSnapshot {
 				if err := s.queueSnapshotFiles(note); err != nil {
 					return err

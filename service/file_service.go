@@ -421,9 +421,18 @@ func (fs *FileService) DeleteAttach(fileID string) error {
 	if err != nil {
 		return err
 	}
-	if attach != nil && attach.Path != "" {
-		os.Remove(attach.Path)
+	if attach != nil {
+		note, err := fs.db.GetNote(attach.NoteID)
+		if err != nil {
+			return err
+		}
+		if note != nil {
+			if err := fs.db.AddNoteHistory(note.NoteID, note.Content); err != nil {
+				return err
+			}
+		}
 	}
+	// Retain bytes for local version history; the active record is removed.
 	return fs.db.DeleteAttach(fileID)
 }
 
@@ -669,10 +678,12 @@ func (fs *FileService) GetNoteHistories(noteID string) ([]map[string]interface{}
 	result := make([]map[string]interface{}, len(histories))
 	for i, h := range histories {
 		result[i] = map[string]interface{}{
-			"Id":          h.ID,
-			"NoteId":      h.NoteID,
-			"Content":     h.Content,
-			"UpdatedTime": h.UpdatedTime,
+			"Id":            h.ID,
+			"NoteId":        h.NoteID,
+			"Content":       h.Content,
+			"IsMarkdown":    h.IsMarkdown,
+			"FilesComplete": h.FilesComplete,
+			"UpdatedTime":   h.UpdatedTime,
 		}
 	}
 	return result, nil

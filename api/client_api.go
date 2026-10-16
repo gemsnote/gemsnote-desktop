@@ -321,6 +321,10 @@ func (c *Client) GetAttachContext(ctx context.Context, fileID, localPath string)
 	}
 
 	contentDisposition := resp.Header().Get("Content-Disposition")
+	disposition, _, dispositionErr := mime.ParseMediaType(contentDisposition)
+	if dispositionErr != nil || disposition != "attachment" {
+		return "", "", fmt.Errorf("attachment response is not a download")
+	}
 
 	var ext, filename string
 	if contentDisposition != "" {
@@ -580,6 +584,7 @@ func (c *Client) UpdateNote(note *models.Note) (*models.Note, error) {
 		"IsTrash":    note.IsTrash,
 		"IsBlog":     note.IsBlog,
 		"IsStar":     note.IsStar,
+		"IsMarkdown": note.IsMarkdown,
 		"Tags":       note.Tags,
 		"ClearTags":  len(note.Tags) == 0,
 		"Files":      note.Files,

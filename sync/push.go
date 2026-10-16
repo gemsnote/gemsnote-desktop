@@ -140,6 +140,30 @@ func (s *SyncService) sendNoteChanges(userID string, syncInfo *models.SyncInfo) 
 
 	var firstErr error
 	for _, note := range notes {
+		if attachments, err := s.db.GetAttachsByNote(note.NoteID); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		} else {
+			missing := false
+			for _, file := range attachments {
+				if file.IsDirty {
+					stat, err := os.Stat(file.Path)
+					if err != nil || !stat.Mode().IsRegular() {
+						missing = true
+						break
+					}
+				}
+			}
+			if missing {
+				if firstErr == nil {
+					firstErr = fmt.Errorf("pending attachment original missing for note %s", note.NoteID)
+				}
+				continue
+			}
+		}
+
 		if note.InitSync {
 			if note.LocalIsNew {
 				err := fmt.Errorf("note %s has no complete local content cache; cannot merge safely", note.NoteID)
@@ -358,10 +382,8 @@ func (s *SyncService) prepareNoteForUpload(note *models.Note) *models.Note {
 	}
 
 	files, fileDatas := s.getNoteFilesForUpload(note)
-	if len(files) > 0 {
-		noteCopy.Files = files
-		noteCopy.FileDatas = fileDatas
-	}
+	noteCopy.Files = files
+	noteCopy.FileDatas = fileDatas
 
 	return &noteCopy
 }
@@ -382,10 +404,6 @@ func (s *SyncService) prepareNotebookForUpload(nb *models.Notebook) *models.Note
 func (s *SyncService) getNoteFilesForUpload(note *models.Note) ([]*models.FileRef, map[string]interface{}) {
 	var files []*models.FileRef
 	fileDatas := make(map[string]interface{})
-
-	if note.Content == "" {
-		return files, fileDatas
-	}
 
 	matches := localImageRe.FindAllStringSubmatch(note.Content, -1)
 	for _, match := range matches {
@@ -433,7 +451,11 @@ func (s *SyncService) getNoteFilesForUpload(note *models.Note) ([]*models.FileRe
 	attachs, err := s.db.GetAttachsByNote(note.NoteID)
 	if err == nil {
 		for _, att := range attachs {
-			if !att.IsDirty || att.Path == "" {
+			if !att.IsDirty && att.ServerFileID != "" {
+				files = append(files, &models.FileRef{FileID: att.ServerFileID, LocalFileID: att.FileID, Title: att.Title, Type: att.Type, IsAttach: true})
+				continue
+			}
+			if att.Path == "" {
 				continue
 			}
 

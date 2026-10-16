@@ -514,8 +514,12 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request) {
 	}
 	// Offline-first: the server-side usn conflict check is skipped; the sync
 	// service resolves conflicts when the change is pushed.
-	if note.Content != content {
-		h.DB.AddNoteHistory(noteID, note.Content)
+	if note.Content != content || note.IsMarkdown != isMarkdown {
+		if err := h.DB.AddNoteHistory(noteID, note.Content); err != nil {
+			h.fail(w, "historySaveFailed")
+			return
+		}
+		note.IsMarkdown = isMarkdown
 		note.Content = content
 		note.ContentIsDirty = true
 		note.Desc = excerpt(content, 150)
@@ -867,8 +871,11 @@ func (h *Handler) listHistories(w http.ResponseWriter, r *http.Request) {
 	items := []map[string]any{}
 	for _, hist := range histories {
 		items = append(items, map[string]any{
-			"UpdatedTime": timeOrNow(hist.UpdatedTime),
-			"Content":     normalizeContent(hist.Content),
+			"Id":            "local:" + strconv.FormatInt(hist.ID, 10),
+			"UpdatedTime":   timeOrNow(hist.UpdatedTime),
+			"Content":       normalizeContent(hist.Content),
+			"IsMarkdown":    hist.IsMarkdown,
+			"FilesComplete": hist.FilesComplete,
 		})
 	}
 	h.writeJSON(w, items)
@@ -1380,6 +1387,70 @@ func (h *Handler) queueSharedDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	if h.OnSharedDownload != nil {
 		h.OnSharedDownload()
+	}
+	h.ok(w)
+}
+
+func (h *Handler) restoreHistory(w http.ResponseWriter, r *http.Request) {
+	user := h.requireUser(w)
+	if user == nil {
+		return
+	}
+	noteID := h.form(r, "noteId")
+	n := h.ownedNote(user.ID, noteID)
+	if n == nil || n.IsTrash {
+		h.fail(w, "noAuth")
+		return
+	}
+	historyID := h.form(r, "historyId")
+	if strings.HasPrefix(historyID, "local:") {
+		id, err := strconv.ParseInt(strings.TrimPrefix(historyID, "local:"), 10, 64)
+		if err != nil {
+			h.fail(w, "historyNotFound")
+			return
+		}
+		if err = h.DB.RestoreLocalHistory(user.ID, noteID, id); err != nil {
+			h.fail(w, err.Error())
+			return
+		}
+		h.ok(w)
+		return
+	}
+	// Do not push/overwrite edits as an implicit side effect of restoring a
+	// server version. The user must synchronize local work first.
+	if n.IsDirty || n.ContentIsDirty || n.LocalIsNew || n.LocalIsDelete {
+		h.fail(w, "historyPendingChanges")
+		return
+	}
+	expected, err := strconv.ParseInt(h.form(r, "usn"), 10, 64)
+	if err != nil || n.Usn != expected {
+		h.fail(w, "conflict")
+		return
+	}
+	if h.Proxy == nil || !h.Proxy.ensureSession() || h.OnSync == nil {
+		h.fail(w, "offline")
+		return
+	}
+	remoteID := n.ServerNoteID
+	if remoteID == "" {
+		remoteID = noteID
+	}
+	data, _, _, err := h.Proxy.call(http.MethodPost, "/api2/note/restoreHistory", url.Values{"noteId": {remoteID}, "historyId": {historyID}, "usn": {strconv.FormatInt(n.Usn, 10)}}, nil)
+	if err != nil {
+		h.fail(w, "offline")
+		return
+	}
+	ok, msg, parsed := parseRe(data)
+	if !parsed || !ok {
+		if msg == "" {
+			msg = "historyRestoreFailed"
+		}
+		h.fail(w, msg)
+		return
+	}
+	if _, err = h.OnSync(); err != nil {
+		h.fail(w, err.Error())
+		return
 	}
 	h.ok(w)
 }

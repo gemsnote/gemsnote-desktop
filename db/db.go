@@ -87,7 +87,7 @@ func (d *Database) Close() error {
 	return d.db.Close()
 }
 
-const dbSchemaVersion = 3
+const dbSchemaVersion = 4
 
 func (d *Database) migrate() error {
 	migrationSQL, err := migrationsFS.ReadFile("migrations.sql")
@@ -108,6 +108,15 @@ func (d *Database) migrate() error {
 	}
 
 	steps := map[int]func(tx *sql.Tx) error{
+		4: func(tx *sql.Tx) error {
+			if err := d.ensureColumn(tx, "note_histories", "is_markdown", "INTEGER"); err != nil {
+				return err
+			}
+			if err := d.ensureColumn(tx, "note_histories", "attachments_json", "TEXT"); err != nil {
+				return err
+			}
+			return d.ensureColumn(tx, "note_histories", "files_complete", "INTEGER NOT NULL DEFAULT 0")
+		},
 		3: func(tx *sql.Tx) error {
 			if err := d.ensureColumn(tx, "notes", "local_edited_time", "INTEGER"); err != nil {
 				return err
