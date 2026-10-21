@@ -16,7 +16,7 @@ func TestBackgroundAvatarUsesCapturedAccountAndNoSecondLogin(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api2/user/info":
-			if r.URL.Query().Get("token") != "captured-token" {
+			if r.Header.Get("Authorization") != "Bearer captured-token" {
 				t.Error("missing captured token")
 			}
 			w.Write([]byte(`{"UserId":"user1","Logo":"/avatar.png"}`))

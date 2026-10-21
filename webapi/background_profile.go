@@ -38,9 +38,7 @@ func refreshAccountAvatar(ctx context.Context, user models.User, database *db.Da
 			return nil, fmt.Errorf("invalid avatar request URL")
 		}
 		if token {
-			q := req.URL.Query()
-			q.Set("token", user.Token)
-			req.URL.RawQuery = q.Encode()
+			req.Header.Set("Authorization", "Bearer "+user.Token)
 		}
 		resp, err := client.Do(req)
 		if err != nil {

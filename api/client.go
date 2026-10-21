@@ -69,9 +69,7 @@ func (c *Client) url(path string) string {
 }
 
 func (c *Client) commonParams() map[string]string {
-	params := map[string]string{
-		"token": c.token,
-	}
+	params := map[string]string{}
 	if c.macAddr != "" {
 		params["macAddr"] = c.macAddr
 	}
@@ -79,6 +77,13 @@ func (c *Client) commonParams() map[string]string {
 		params["v"] = c.version
 	}
 	return params
+}
+
+func (c *Client) authorize(req *resty.Request) *resty.Request {
+	if c.token != "" {
+		req.SetHeader("Authorization", "Bearer "+c.token)
+	}
+	return req
 }
 
 func (c *Client) redactError(err error) error {
@@ -106,7 +111,7 @@ func (c *Client) getWithClientContext(ctx context.Context, client *resty.Client,
 		allParams[k] = v
 	}
 
-	resp, err := client.R().SetContext(ctx).SetQueryParams(allParams).Get(path)
+	resp, err := c.authorize(client.R().SetContext(ctx)).SetQueryParams(allParams).Get(path)
 	if err != nil {
 		err = c.redactError(err)
 		logrus.Errorf("API GET %s error: %v", path, err)
@@ -142,7 +147,7 @@ func (c *Client) postWithClient(client *resty.Client, path string, data interfac
 		allParams[k] = v
 	}
 
-	req := client.R().SetQueryParams(allParams)
+	req := c.authorize(client.R()).SetQueryParams(allParams)
 	if data != nil {
 		form := flattenFormData(data)
 		if path == "note/addNote" || path == "note/updateNote" {
@@ -233,7 +238,7 @@ func (c *Client) postFiles(path string, formData map[string]string, files map[st
 		allParams[k] = v
 	}
 
-	req := c.client.R().SetQueryParams(allParams)
+	req := c.authorize(c.client.R()).SetQueryParams(allParams)
 
 	for fieldName, filePath := range files {
 		req = req.SetFile(fieldName, filePath)

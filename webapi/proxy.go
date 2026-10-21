@@ -6,7 +6,6 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -25,25 +24,22 @@ type ServerProxy struct {
 	DB    *db.Database
 	Files *service.FileService
 
-	client           *http.Client
-	email            string
-	pwd              string
-	sessionOk        bool
-	browserSessionOk bool
-	token            string
-	remoteUser       *models.User
-	versionNotice    string
-	remoteLogo       string
+	client        *http.Client
+	email         string
+	pwd           string
+	sessionOk     bool
+	token         string
+	remoteUser    *models.User
+	versionNotice string
+	remoteLogo    string
 }
 
 func NewServerProxy(database *db.Database, files *service.FileService) *ServerProxy {
-	jar, _ := cookiejar.New(nil)
 	p := &ServerProxy{
 		DB:    database,
 		Files: files,
 		client: &http.Client{
 			Timeout: 60 * time.Second,
-			Jar:     jar,
 		},
 	}
 	p.email, _ = database.GetConfig("proxy:email")
@@ -62,7 +58,6 @@ func (p *ServerProxy) SetHost(host string) {
 	}
 	p.DB.SetConfig("host", strings.TrimRight(host, "/"))
 	p.sessionOk = false
-	p.browserSessionOk = false
 	p.token = ""
 	p.remoteUser = nil
 }
@@ -78,9 +73,7 @@ func (p *ServerProxy) call(method, path string, form url.Values, file *multipart
 	}
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	if p.token != "" {
-		q := req.URL.Query()
-		q.Set("token", p.token)
-		req.URL.RawQuery = q.Encode()
+		req.Header.Set("Authorization", "Bearer "+p.token)
 	}
 	if file != nil {
 		body := &bytes.Buffer{}
@@ -144,9 +137,7 @@ func (p *ServerProxy) callJSON(method, path string, payload any) ([]byte, string
 	}
 	req.Header.Set("X-Requested-With", "XMLHttpRequest")
 	if p.token != "" {
-		q := req.URL.Query()
-		q.Set("token", p.token)
-		req.URL.RawQuery = q.Encode()
+		req.Header.Set("Authorization", "Bearer "+p.token)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.client.Do(req)
@@ -222,7 +213,6 @@ func (p *ServerProxy) LoginServer(email, pwd string) (bool, string) {
 		return false, "incompatibleServer"
 	}
 	p.email, p.pwd, p.token, p.sessionOk = email, pwd, auth.Token, true
-	p.browserSessionOk = false
 	p.remoteUser = &models.User{ID: auth.User.UserID, Username: auth.User.Username, Email: auth.User.Email, IsActive: true}
 	p.remoteLogo = auth.User.Logo
 	p.versionNotice = gemsnoteapi.ServerVersionNotice(&gemsnoteapi.ServerVersion{Server: auth.Server.Name, Version: auth.Server.Version, MinVersion: auth.Server.MinVersion}, nil)
@@ -393,25 +383,6 @@ func (p *ServerProxy) ensureSession() bool {
 	return ok
 }
 
-func (p *ServerProxy) ensureBrowserSessionStatus() (bool, string) {
-	if ok, msg := p.ensureSessionStatus(); !ok {
-		return false, msg
-	}
-	if p.browserSessionOk {
-		return true, ""
-	}
-	data, _, _, err := p.callJSON(http.MethodPost, "/api2/auth/session", map[string]string{"email": p.email, "pwd": p.pwd})
-	if err != nil {
-		return false, "offline"
-	}
-	ok, msg, parsed := parseRe(data)
-	if !parsed {
-		return false, "serverError"
-	}
-	p.browserSessionOk = ok
-	return ok, msg
-}
-
 func (p *ServerProxy) ensureSessionStatus() (bool, string) {
 	if p.sessionOk {
 		return true, ""
@@ -459,13 +430,13 @@ func (p *ServerProxy) SharedNotebooks(user *models.User) (map[string]any, bool) 
 	if !p.configured() {
 		return empty, false
 	}
-	if ok, _ := p.ensureBrowserSessionStatus(); !ok {
+	if ok, _ := p.ensureSessionStatus(); !ok {
 		return empty, false
 	}
 	shared, isAdmin, ok := p.fetchBootstrapSession()
 	if !ok {
-		p.browserSessionOk = false
-		if sessionReady, _ := p.ensureBrowserSessionStatus(); sessionReady {
+		p.sessionOk = false
+		if sessionReady, _ := p.ensureSessionStatus(); sessionReady {
 			shared, isAdmin, ok = p.fetchBootstrapSession()
 		}
 	}
@@ -504,10 +475,7 @@ func (p *ServerProxy) Logout() {
 	// Logout is deliberately local. The desktop session cookie is private to
 	// this client, so replacing its jar invalidates it without making logout
 	// depend on the remote server being reachable.
-	jar, _ := cookiejar.New(nil)
-	p.client.Jar = jar
 	p.sessionOk = false
-	p.browserSessionOk = false
 	p.token = ""
 	p.remoteUser = nil
 	// Credentials are only a session aid for reconnecting while logged in.
@@ -544,9 +512,9 @@ func (p *ServerProxy) Forward(w http.ResponseWriter, r *http.Request, form url.V
 		w.Write([]byte(`{"Ok":false,"Msg":"offline"}`))
 		return true
 	}
-	if needsBrowserSession(r.URL.Path) && isNotLogin(data) {
-		p.browserSessionOk = false
-		if ok, msg := p.ensureBrowserSessionStatus(); !ok {
+	if !p.isGuestPath(r.URL.Path) && isNotLogin(data) {
+		p.sessionOk = false
+		if ok, msg := p.ensureSessionStatus(); !ok {
 			if msg == "" {
 				msg = "NOTLOGIN"
 			}
@@ -571,10 +539,6 @@ func (p *ServerProxy) Forward(w http.ResponseWriter, r *http.Request, form url.V
 	}
 	w.Write(data)
 	return true
-}
-
-func needsBrowserSession(path string) bool {
-	return path == "/api2/groups" || path == "/api2/web/groups" || path == "/api2/admin/data" || path == "/api2/avatar" || path == "/api2/file/uploadAvatar" || path == "/api2/user/updateUsername" || path == "/api2/user/updatePwd" || path == "/api2/user/reSendActiveEmail" || strings.HasPrefix(path, "/api2/member/") || strings.HasPrefix(path, "/api2/share/") || strings.HasPrefix(path, "/api2/web/")
 }
 
 var guestPaths = []string{"/captcha/", "/api2/auth/register", "/api2/auth/password/request", "/api2/auth/password/reset", "/api2/web/verifyEmail"}
@@ -635,15 +599,6 @@ func (h *Handler) routeProxied(w http.ResponseWriter, r *http.Request) bool {
 		h.writeJSON(w, map[string]any{"Ok": false, "Msg": msg})
 		return true
 	}
-	if needsBrowserSession(path) {
-		if ok, msg := proxy.ensureBrowserSessionStatus(); !ok {
-			if msg == "" {
-				msg = "NOTLOGIN"
-			}
-			h.writeJSON(w, map[string]any{"Ok": false, "Msg": msg})
-			return true
-		}
-	}
 	return proxy.Forward(w, r, r.Form, nil)
 }
 
@@ -654,7 +609,7 @@ func (h *Handler) proxyUpdatePwd(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	newPwd := r.FormValue("pwd")
-	if ok, msg := h.Proxy.ensureBrowserSessionStatus(); !ok {
+	if ok, msg := h.Proxy.ensureSessionStatus(); !ok {
 		h.fail(w, msg)
 		return true
 	}
@@ -678,7 +633,6 @@ func (h *Handler) proxyUpdatePwd(w http.ResponseWriter, r *http.Request) bool {
 	h.DB.SetConfig("proxy:pwd", newPwd)
 	h.Proxy.pwd = newPwd
 	h.Proxy.sessionOk = false
-	h.Proxy.browserSessionOk = false
 	h.Proxy.token = ""
 	h.ok(w)
 	return true
@@ -690,7 +644,7 @@ func (h *Handler) proxyAvatar(w http.ResponseWriter, r *http.Request, fh *multip
 		h.writeJSON(w, map[string]any{"Ok": false, "Msg": "NOTLOGIN"})
 		return true
 	}
-	if ok, msg := h.Proxy.ensureBrowserSessionStatus(); !ok {
+	if ok, msg := h.Proxy.ensureSessionStatus(); !ok {
 		if msg == "" {
 			msg = "NOTLOGIN"
 		}

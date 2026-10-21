@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/http"
-	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"sync/atomic"
@@ -22,21 +21,17 @@ func api2LoginResponse(userID string) string {
 	return fmt.Sprintf(`{"Ok":true,"Token":"test-token","User":{"UserId":%q,"Username":"tester","Email":"tester@example.test","Logo":""},"Server":{"Name":"gemsnote","Version":"1.0.0","MinVersion":""}}`, userID)
 }
 
-func TestSharedNotebooksRestoresAndRenewsSession(t *testing.T) {
+func TestSharedNotebooksUsesAndRenewsBearerToken(t *testing.T) {
 	var logins atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api2/auth/login":
-			w.Write([]byte(api2LoginResponse("admin")))
-		case "/api2/auth/session":
 			logins.Add(1)
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
-			w.Write([]byte(`{"Ok":true}`))
+			w.Write([]byte(api2LoginResponse("admin")))
 		case "/api2/system/version":
 			w.Write([]byte(`{"server":"gemsnote","version":"1.0.0","min_version":""}`))
 		case "/api2/web/bootstrap":
-			cookie, err := r.Cookie("session")
-			if err != nil || cookie.Value != "valid" {
+			if r.Header.Get("Authorization") != "Bearer test-token" {
 				w.Write([]byte(`{"Ok":true,"User":null}`))
 				return
 			}
@@ -59,28 +54,25 @@ func TestSharedNotebooksRestoresAndRenewsSession(t *testing.T) {
 	if !admin || logins.Load() != 1 {
 		t.Fatalf("initial session: admin=%v logins=%d", admin, logins.Load())
 	}
-	proxy.client.Jar, _ = newEmptyCookieJar()
+	proxy.sessionOk = false
+	proxy.token = ""
 	_, admin = proxy.SharedNotebooks(nil)
 	if !admin || logins.Load() != 2 {
 		t.Fatalf("renewed session: admin=%v logins=%d", admin, logins.Load())
 	}
 }
 
-func TestAccountGroupsUsesBrowserSession(t *testing.T) {
-	var tokenLogins, sessionLogins atomic.Int32
+func TestAccountGroupsUsesBearerToken(t *testing.T) {
+	var tokenLogins atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api2/auth/login":
 			tokenLogins.Add(1)
 			w.Write([]byte(api2LoginResponse("user1")))
-		case "/api2/auth/session":
-			sessionLogins.Add(1)
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
-			w.Write([]byte(`{"Ok":true}`))
 		case "/api2/system/version":
 			w.Write([]byte(`{"server":"gemsnote","version":"1.0.0"}`))
 		case "/api2/groups":
-			if cookie, err := r.Cookie("session"); err != nil || cookie.Value != "valid" {
+			if r.Header.Get("Authorization") != "Bearer test-token" {
 				w.Write([]byte(`{"Ok":false,"Msg":"NOTLOGIN"}`))
 				return
 			}
@@ -97,25 +89,20 @@ func TestAccountGroupsUsesBrowserSession(t *testing.T) {
 	e.db.SetConfig("proxy:pwd", "secret")
 	e.handler.Proxy = NewServerProxy(e.db, e.handler.Files)
 	_, body := e.get(t, "/api2/groups")
-	if string(body) != "[]" || tokenLogins.Load() != 1 || sessionLogins.Load() != 1 {
-		t.Fatalf("account groups response=%s token logins=%d session logins=%d", body, tokenLogins.Load(), sessionLogins.Load())
+	if string(body) != "[]" || tokenLogins.Load() != 1 {
+		t.Fatalf("account groups response=%s token logins=%d", body, tokenLogins.Load())
 	}
 }
 
-func TestAccountUpdateUsesBrowserSessionAndPreservesJSON(t *testing.T) {
-	var sessionLogins atomic.Int32
+func TestAccountUpdateUsesBearerAndPreservesJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api2/auth/login":
 			w.Write([]byte(api2LoginResponse("user1")))
-		case "/api2/auth/session":
-			sessionLogins.Add(1)
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
-			w.Write([]byte(`{"Ok":true}`))
 		case "/api2/system/version":
 			w.Write([]byte(`{"server":"gemsnote","version":"1.0.0"}`))
 		case "/api2/user/updateUsername":
-			if cookie, err := r.Cookie("session"); err != nil || cookie.Value != "valid" {
+			if r.Header.Get("Authorization") != "Bearer test-token" {
 				w.Write([]byte(`{"Ok":false,"Msg":"NOTLOGIN"}`))
 				return
 			}
@@ -143,8 +130,8 @@ func TestAccountUpdateUsesBrowserSessionAndPreservesJSON(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	e.handler.ServeHTTP(rec, req)
-	if rec.Code != http.StatusCreated || rec.Body.String() != `{"Ok":true}` || sessionLogins.Load() != 1 {
-		t.Fatalf("account JSON forward: status=%d body=%s sessions=%d", rec.Code, rec.Body.String(), sessionLogins.Load())
+	if rec.Code != http.StatusCreated || rec.Body.String() != `{"Ok":true}` {
+		t.Fatalf("account JSON forward: status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -156,13 +143,10 @@ func TestUpdatePasswordCachesOnlyConfirmedRemoteChange(t *testing.T) {
 		switch r.URL.Path {
 		case "/api2/auth/login":
 			w.Write([]byte(api2LoginResponse(userID)))
-		case "/api2/auth/session":
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
-			w.Write([]byte(`{"Ok":true}`))
 		case "/api2/system/version":
 			w.Write([]byte(`{"server":"gemsnote","version":"1.0.0"}`))
 		case "/api2/user/updatePwd":
-			if _, err := r.Cookie("session"); err != nil {
+			if r.Header.Get("Authorization") != "Bearer test-token" {
 				w.Write([]byte(`{"Ok":false,"Msg":"NOTLOGIN"}`))
 				return
 			}
@@ -207,9 +191,6 @@ func TestAvatarUploadForwardsAjaxHeader(t *testing.T) {
 		switch r.URL.Path {
 		case "/api2/auth/login":
 			w.Write([]byte(api2LoginResponse(userID)))
-		case "/api2/auth/session":
-			http.SetCookie(w, &http.Cookie{Name: "session", Value: "valid", Path: "/"})
-			w.Write([]byte(`{"Ok":true}`))
 		case "/api2/system/version":
 			w.Write([]byte(`{"server":"gemsnote","version":"1.0.0"}`))
 		case "/api2/avatar":
@@ -217,7 +198,7 @@ func TestAvatarUploadForwardsAjaxHeader(t *testing.T) {
 				w.Write([]byte(`{"Ok":false,"Msg":"invalidRequest"}`))
 				return
 			}
-			if cookie, err := r.Cookie("session"); err != nil || cookie.Value != "valid" {
+			if r.Header.Get("Authorization") != "Bearer test-token" {
 				w.Write([]byte(`{"Ok":false,"Msg":"NOTLOGIN"}`))
 				return
 			}
@@ -276,7 +257,7 @@ func TestProfileAvatarUsesTokenAndCachesImage(t *testing.T) {
 		case "/api2/system/version":
 			w.Write([]byte(`{"server":"gemsnote","version":"1.0.0"}`))
 		case "/api2/user/info":
-			if r.URL.Query().Get("token") != "test-token" {
+			if r.Header.Get("Authorization") != "Bearer test-token" {
 				w.Write([]byte(`{"Ok":false,"Msg":"NOTLOGIN"}`))
 				return
 			}
@@ -461,8 +442,4 @@ func TestProfileRefreshAcceptsDefaultOrMissingAvatar(t *testing.T) {
 			}
 		})
 	}
-}
-
-func newEmptyCookieJar() (http.CookieJar, error) {
-	return cookiejar.New(nil)
 }
