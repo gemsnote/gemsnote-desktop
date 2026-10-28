@@ -334,10 +334,10 @@ func (d *Database) UpdateNote(note *models.Note) error {
 
 	_, err := d.db.Exec(`
 		UPDATE notes SET
-			title = ?, content = ?, desc = ?, tags = ?, 
+			title = ?, content = ?, desc = ?, tags = ?, is_markdown = ?,
 			is_dirty = ?, content_is_dirty = ?, local_edited_time = ?
 		WHERE note_id = ?
-	`, note.Title, note.Content, note.Desc, string(tagsJSON), note.IsDirty, note.ContentIsDirty, time.Now().Unix(), note.NoteID)
+	`, note.Title, note.Content, note.Desc, string(tagsJSON), note.IsMarkdown, note.IsDirty, note.ContentIsDirty, time.Now().Unix(), note.NoteID)
 	return err
 }
 

@@ -512,6 +512,9 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "notExists")
 		return
 	}
+	if !r.Form.Has("isMarkdown") {
+		isMarkdown = note.IsMarkdown
+	}
 	// Offline-first: the server-side usn conflict check is skipped; the sync
 	// service resolves conflicts when the change is pushed.
 	if note.Content != content || note.IsMarkdown != isMarkdown {
