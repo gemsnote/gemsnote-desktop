@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gemsnote/gemsnote/api"
@@ -65,8 +66,8 @@ func TestRestoredAttachmentSetsSurviveEmptyBodyAndIncrementalSync(t *testing.T) 
 		t.Fatal(string(bytes))
 	}
 	remote.Files = []*models.FileRef{{FileID: "missing", IsAttach: true}}
-	if err = svc.syncAttachmentSet(remote); err == nil {
-		t.Fatal("error text accepted as attachment")
+	if err = svc.syncAttachmentSet(remote); err == nil || !strings.Contains(err.Error(), "note remote") {
+		t.Fatalf("missing attachment error must identify the note: %v", err)
 	}
 	active, err = d.GetAttachsByNote("n")
 	must(err)

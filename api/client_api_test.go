@@ -124,6 +124,31 @@ func TestImageDownloadDoesNotCacheErrorPages(t *testing.T) {
 	}
 }
 
+func TestAttachmentDownloadErrorsIdentifyFileWithoutCachingErrorBody(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusInternalServerError} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api2/file/getAttach" || r.URL.Query().Get("fileId") != "missing-attachment" {
+					t.Errorf("unexpected file request: %s", r.URL.Path)
+				}
+				http.Error(w, "fileNotFound", status)
+			}))
+			defer server.Close()
+			client := NewClient()
+			client.SetHost(server.URL)
+			dir := t.TempDir()
+			path, title, err := client.GetAttach("missing-attachment", dir)
+			if err == nil || !strings.Contains(err.Error(), "missing-attachment") || path != "" || title != "" {
+				t.Fatalf("missing attachment: path=%q title=%q err=%v", path, title, err)
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("error response was cached as an attachment: %v %v", entries, err)
+			}
+		})
+	}
+}
+
 func TestAddNotePreservesCreationTimeButUsesServerModificationTime(t *testing.T) {
 	created := time.Date(2020, 2, 3, 4, 5, 6, 0, time.UTC)
 	updated := created.Add(2 * time.Hour)

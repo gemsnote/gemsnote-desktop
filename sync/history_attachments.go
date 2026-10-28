@@ -54,7 +54,7 @@ func (s *SyncService) syncAttachmentSet(remote *models.Note) error {
 		}
 		path, title, e := s.api.GetAttach(ref.FileID, dir)
 		if e != nil {
-			return e
+			return fmt.Errorf("sync attachments for note %s: %w", remoteID, e)
 		}
 		if ref.Title != "" {
 			title = ref.Title

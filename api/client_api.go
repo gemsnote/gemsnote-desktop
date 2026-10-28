@@ -317,13 +317,13 @@ func (c *Client) GetAttachContext(ctx context.Context, fileID, localPath string)
 		return "", "", err
 	}
 	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-		return "", "", fmt.Errorf("download attachment failed (HTTP %d)", resp.StatusCode())
+		return "", "", fmt.Errorf("download attachment %s failed (HTTP %d)", fileID, resp.StatusCode())
 	}
 
 	contentDisposition := resp.Header().Get("Content-Disposition")
 	disposition, _, dispositionErr := mime.ParseMediaType(contentDisposition)
 	if dispositionErr != nil || disposition != "attachment" {
-		return "", "", fmt.Errorf("attachment response is not a download")
+		return "", "", fmt.Errorf("attachment %s response is not a download", fileID)
 	}
 
 	var ext, filename string
