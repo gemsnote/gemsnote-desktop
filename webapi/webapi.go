@@ -56,6 +56,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if r.URL.Path == "/api2/desktop/exportFile" {
+		r.Body = http.MaxBytesReader(w, r.Body, 180*1024*1024)
+	}
 	if err := r.ParseForm(); err != nil {
 		h.writeJSON(w, map[string]any{"Ok": false, "Msg": "invalidForm"})
 		return
@@ -137,8 +140,8 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) bool {
 	}
 
 	switch {
-	case path == "/api2/desktop/export" && method == http.MethodPost:
-		h.exportNote(w, r)
+	case path == "/api2/desktop/exportFile" && method == http.MethodPost:
+		h.exportFile(w, r)
 	case path == "/api2/desktop/attachments/retry" && method == http.MethodPost:
 		h.retryAttachment(w, r)
 	case path == "/api2/desktop/about" && method == http.MethodGet:

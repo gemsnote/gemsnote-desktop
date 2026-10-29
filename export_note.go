@@ -23,6 +23,20 @@ func noteExportOptions(filename, language string) runtime.SaveDialogOptions {
 			display = "HTML 笔记"
 		}
 	}
+	if strings.HasSuffix(filename, ".rtf") {
+		pattern = "*.rtf"
+		display = "Rich Text Format"
+		if strings.HasPrefix(strings.ToLower(language), "zh") {
+			display = "RTF 富文本"
+		}
+	}
+	if strings.HasSuffix(filename, ".zip") {
+		pattern = "*.zip"
+		title, display = "Export notebook", "ZIP archive"
+		if strings.HasPrefix(strings.ToLower(language), "zh") {
+			title, display = "导出笔记本", "ZIP 压缩包"
+		}
+	}
 	return runtime.SaveDialogOptions{Title: title, DefaultFilename: filename, CanCreateDirectories: true, Filters: []runtime.FileFilter{{DisplayName: display, Pattern: pattern}}}
 }
 

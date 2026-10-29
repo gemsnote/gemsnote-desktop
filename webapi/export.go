@@ -1,50 +1,35 @@
 package webapi
 
 import (
+	"encoding/base64"
 	"net/http"
+	"path/filepath"
 	"strings"
-
-	"github.com/gemsnote/gemsnote/db"
+	"unicode/utf8"
 )
 
-func exportFilename(title string, markdown bool) string {
-	name := strings.TrimSpace(strings.Map(func(r rune) rune {
-		if r < 32 || strings.ContainsRune(`<>:"/\|?*`, r) {
-			return '_'
-		}
-		return r
-	}, title))
-	name = strings.TrimRight(name, ". ")
-	if name == "" {
-		name = "note"
-	}
-	if markdown {
-		return name + ".md"
-	}
-	return name + ".html"
-}
-
-func (h *Handler) exportNote(w http.ResponseWriter, r *http.Request) {
-	user := h.requireUser(w)
-	if user == nil {
+// The shared frontend converts the displayed note or notebook into Markdown, RTF or ZIP.
+// It supplies bytes, never an output path; the native save dialog owns that choice.
+func (h *Handler) exportFile(w http.ResponseWriter, r *http.Request) {
+	if h.requireUser(w) == nil {
 		return
 	}
 	if h.OnExportNote == nil {
 		h.fail(w, "exportUnavailable")
 		return
 	}
-	var title, content string
-	var markdown bool
-	noteID := h.form(r, "noteId")
-	if note := h.ownedNote(user.ID, noteID); note != nil {
-		title, content, markdown = note.Title, normalizeContent(note.Content), note.IsMarkdown
-	} else if shared, err := h.DB.GetSharedNote(db.SharedAccountID(user.Host, user.ID), noteID); err == nil && shared != nil && (shared.CacheState == "ready" || shared.CacheState == "stale") {
-		title, content, markdown = shared.Title, normalizeContent(shared.Content), shared.IsMarkdown
-	} else {
-		h.fail(w, "noAuth")
+	filename := h.form(r, "filename")
+	ext := filepath.Ext(filename)
+	if (ext != ".md" && ext != ".rtf" && ext != ".zip") || len(filename) > 255 || filename == ext || strings.ContainsAny(filename, "<>:\"/\\|?*\x00\r\n") || strings.HasPrefix(filename, ".") {
+		h.fail(w, "invalidExportFile")
 		return
 	}
-	saved, err := h.OnExportNote(exportFilename(title, markdown), content, r.Header.Get("Accept-Language"))
+	content, err := base64.StdEncoding.DecodeString(h.form(r, "data"))
+	if err != nil || len(content) > 128*1024*1024 || (ext == ".md" && !utf8.Valid(content)) {
+		h.fail(w, "invalidExportFile")
+		return
+	}
+	saved, err := h.OnExportNote(filename, string(content), r.Header.Get("Accept-Language"))
 	if err != nil {
 		h.fail(w, "exportSaveFailed")
 		return
