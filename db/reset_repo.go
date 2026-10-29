@@ -41,5 +41,8 @@ func (d *Database) ResetAccountCache(userID, accountID string) error {
 	if _, err := tx.Exec(`UPDATE users SET last_sync_usn = -1, notebook_usn = -1, note_usn = -1, tag_usn = -1, last_sync_time = NULL WHERE _id = ?`, userID); err != nil {
 		return err
 	}
+	if _, err := tx.Exec(`DELETE FROM config WHERE key=?`, "sharing:"+accountID); err != nil {
+		return err
+	}
 	return tx.Commit()
 }

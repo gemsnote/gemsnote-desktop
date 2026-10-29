@@ -186,6 +186,11 @@ func (s *Service) round(user *models.User, attempt int) error {
 	if err = s.db.PublishSharedSnapshot(accountID, items, snapshot.Total); err != nil {
 		return err
 	}
+	if len(snapshot.Sharing) > 0 {
+		if err = s.db.SetConfig("sharing:"+accountID, string(snapshot.Sharing)); err != nil {
+			return err
+		}
+	}
 	if err = s.db.ClearSharedSnapshotStaging(accountID, snapshot.SnapshotID); err != nil {
 		return err
 	}

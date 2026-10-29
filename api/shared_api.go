@@ -43,11 +43,12 @@ type SharedCapabilities struct {
 }
 
 type SharedSnapshot struct {
-	Ok         bool   `json:"Ok"`
-	Msg        string `json:"Msg"`
-	SnapshotID string `json:"SnapshotId"`
-	ExpiresAt  string `json:"ExpiresAt"`
-	Total      int    `json:"Total"`
+	Sharing    json.RawMessage `json:"Sharing"`
+	Ok         bool            `json:"Ok"`
+	Msg        string          `json:"Msg"`
+	SnapshotID string          `json:"SnapshotId"`
+	ExpiresAt  string          `json:"ExpiresAt"`
+	Total      int             `json:"Total"`
 }
 
 type SharedSnapshotPage struct {

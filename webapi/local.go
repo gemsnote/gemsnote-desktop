@@ -190,6 +190,7 @@ func (h *Handler) bootstrap(w http.ResponseWriter) {
 		"IsAdmin":         isAdmin,
 		"Notebooks":       h.DB.MapNotebooks(notebooks),
 		"SharedNotebooks": shared,
+		"Sharing":         h.cachedSharing(user),
 		"Tags":            tags,
 		"TotalNotes":      totalNotes,
 		"TotalStarred":    totalStarred,
@@ -206,6 +207,7 @@ func (h *Handler) noteListItem(n *models.Note) map[string]any {
 		"Title":           n.Title,
 		"Desc":            n.Desc,
 		"IsStar":          n.IsStar,
+		"IsMarkdown":      n.IsMarkdown,
 		"IsDirty":         n.IsDirty,
 		"CreatedTime":     timeOrNow(n.CreatedTime),
 		"UpdatedTime":     timeOrNow(n.UpdatedTime),
@@ -323,7 +325,7 @@ func (h *Handler) sharedNotes(w http.ResponseWriter, r *http.Request) {
 	}
 	items := make([]map[string]any, 0, end-start)
 	for _, n := range list[start:end] {
-		items = append(items, map[string]any{"NoteId": n.NoteID, "NotebookId": n.NotebookID, "UserId": n.OwnerUserID, "Title": n.Title, "Desc": n.Desc, "Perm": n.Perm, "IsShared": true, "CacheState": n.CacheState, "CreatedTime": timeOrNow(n.CreatedTime), "UpdatedTime": timeOrNow(n.UpdatedTime)})
+		items = append(items, map[string]any{"NoteId": n.NoteID, "NotebookId": n.NotebookID, "UserId": n.OwnerUserID, "Title": n.Title, "Desc": n.Desc, "Perm": n.Perm, "IsMarkdown": n.IsMarkdown, "IsShared": true, "CacheState": n.CacheState, "CreatedTime": timeOrNow(n.CreatedTime), "UpdatedTime": timeOrNow(n.UpdatedTime)})
 	}
 	h.writeJSON(w, items)
 }
@@ -801,12 +803,17 @@ func (h *Handler) copySharedNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	targetID := h.form(r, "notebookId")
-	if h.ownedNotebook(user.ID, targetID) == nil {
+	target := h.ownedNotebook(user.ID, targetID)
+	if target == nil {
 		h.fail(w, "invalidNotebook")
 		return
 	}
+	if target.ServerNotebookID == "" || target.LocalIsNew {
+		h.fail(w, "notebookNotSynced")
+		return
+	}
 	form := url.Values{
-		"notebookId": {targetID},
+		"notebookId": {target.ServerNotebookID},
 		"fromUserId": {h.form(r, "fromUserId")},
 	}
 	for index, noteID := range formList(r, "noteIds") {

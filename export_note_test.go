@@ -30,6 +30,14 @@ func TestWriteNoteExportPreservesUTF8AndReplacesOnlyOnSuccess(t *testing.T) {
 func TestNoteExportDialogUsesSelectedLanguageAndFormat(t *testing.T) {
 	zh := noteExportOptions("珠玑.md", "zh-CN")
 	en := noteExportOptions("note.html", "en-US")
+	rtf := noteExportOptions("rich.rtf", "en-US")
+	if rtf.Filters[0].Pattern != "*.rtf" {
+		t.Fatalf("RTF dialog: %+v", rtf)
+	}
+	zip := noteExportOptions("笔记本.zip", "zh-CN")
+	if zip.Title != "导出笔记本" || zip.Filters[0].Pattern != "*.zip" {
+		t.Fatalf("ZIP dialog: %+v", zip)
+	}
 	if zh.Title != "导出笔记" || zh.DefaultFilename != "珠玑.md" || zh.Filters[0].Pattern != "*.md" {
 		t.Fatalf("Chinese Markdown dialog: %+v", zh)
 	}

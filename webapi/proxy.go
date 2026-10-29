@@ -456,6 +456,7 @@ func (p *ServerProxy) fetchBootstrapSession() (map[string]any, bool, bool) {
 	}
 	var payload struct {
 		SharedNotebooks map[string]any
+		Sharing         json.RawMessage
 		IsAdmin         bool
 		User            *struct{ UserId string }
 	}
@@ -467,6 +468,9 @@ func (p *ServerProxy) fetchBootstrapSession() (map[string]any, bool, bool) {
 			return nil, false, false
 		}
 		payload.SharedNotebooks = map[string]any{}
+	}
+	if len(payload.Sharing) > 0 {
+		p.DB.SetConfig("sharing:"+db.SharedAccountID(p.host(), payload.User.UserId), string(payload.Sharing))
 	}
 	return payload.SharedNotebooks, payload.IsAdmin, true
 }
@@ -530,6 +534,9 @@ func (p *ServerProxy) Forward(w http.ResponseWriter, r *http.Request, form url.V
 			w.Write([]byte(`{"Ok":false,"Msg":"offline"}`))
 			return true
 		}
+	}
+	if err == nil && status >= 200 && status < 300 && (r.URL.Path == "/api2/share/addShareNote" || r.URL.Path == "/api2/share/deleteShareNote") {
+		p.fetchBootstrapSession()
 	}
 	if contentType != "" {
 		w.Header().Set("Content-Type", contentType)
@@ -598,6 +605,25 @@ func (h *Handler) routeProxied(w http.ResponseWriter, r *http.Request) bool {
 		}
 		h.writeJSON(w, map[string]any{"Ok": false, "Msg": msg})
 		return true
+	}
+	if path == "/api2/share/addShareNote" || path == "/api2/share/deleteShareNote" || path == "/api2/web/shareMembers" {
+		user := h.requireUser(w)
+		if user == nil {
+			return true
+		}
+		note := h.ownedNote(user.ID, h.form(r, "noteId"))
+		if note == nil {
+			h.fail(w, "notExists")
+			return true
+		}
+		if note.ServerNoteID == "" || note.LocalIsNew {
+			h.fail(w, "noteNotSynced")
+			return true
+		}
+		r.Form.Set("noteId", note.ServerNoteID)
+		// These existing controller actions take form parameters. Also convert
+		// bridge JSON input after parsing so the remote ID reaches the server.
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 	return proxy.Forward(w, r, r.Form, nil)
 }

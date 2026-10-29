@@ -834,17 +834,6 @@ func (a *App) ReadFile(path string) string {
 
 // ==================== Export ====================
 
-func (a *App) ExportNote(noteID, format string) map[string]interface{} {
-	path, err := a.files.ExportNoteContent(noteID, format)
-	if err != nil {
-		return map[string]interface{}{"Ok": false, "Msg": err.Error()}
-	}
-	return map[string]interface{}{
-		"Ok":   true,
-		"Path": path,
-	}
-}
-
 func (a *App) ExportPDFServer(noteID string) map[string]interface{} {
 	user, _ := a.db.GetActiveUser()
 	if user == nil || user.Host == "" {

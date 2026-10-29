@@ -539,38 +539,6 @@ func (fs *FileService) GetFileMD5(path string) (string, error) {
 	return utils.MD5(string(data)), nil
 }
 
-func (fs *FileService) ExportNoteContent(noteID, format string) (string, error) {
-	note, err := fs.db.GetNote(noteID)
-	if err != nil || note == nil {
-		return "", fmt.Errorf("note not found: %s", noteID)
-	}
-
-	user, _ := fs.db.GetActiveUser()
-	exportDir := fs.dataDir
-	if user != nil {
-		exportDir = filepath.Join(fs.GetUserDir(user.ID), "export")
-	}
-	os.MkdirAll(exportDir, 0755)
-
-	filename := noteID + "." + format
-	fullPath := filepath.Join(exportDir, filename)
-
-	content := note.Content
-	if note.IsMarkdown && format == "html" {
-		content = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>" +
-			note.Title + "</title></head><body><pre>" + content + "</pre></body></html>"
-	} else if format == "html" {
-		content = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>" +
-			note.Title + "</title></head><body>" + content + "</body></html>"
-	}
-
-	if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
-		return "", err
-	}
-
-	return fullPath, nil
-}
-
 func (fs *FileService) GetAllUsers() ([]map[string]interface{}, error) {
 	users, err := fs.db.GetAllUsers()
 	if err != nil {
