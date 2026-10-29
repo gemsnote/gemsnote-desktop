@@ -5,8 +5,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/gemsnote/gemsnote/api"
 	"github.com/gemsnote/gemsnote/models"
 	"github.com/gemsnote/gemsnote/utils"
+	"github.com/sirupsen/logrus"
 )
 
 // Metadata APIs include the complete file set. Incremental sync must apply
@@ -54,13 +56,25 @@ func (s *SyncService) syncAttachmentSet(remote *models.Note) error {
 		}
 		path, title, e := s.api.GetAttach(ref.FileID, dir)
 		if e != nil {
-			return fmt.Errorf("sync attachments for note %s: %w", remoteID, e)
+			if !api.IsAttachmentMissing(e) {
+				return fmt.Errorf("sync attachments for note %s: %w", remoteID, e)
+			}
+			// Keep the remote reference without inventing an empty file. It must
+			// remain in future uploads even though its bytes are unavailable.
+			logrus.Warnf("Attachment unavailable; keeping placeholder: note=%s file=%s", remoteID, ref.FileID)
 		}
 		if ref.Title != "" {
 			title = ref.Title
 		}
+		if title == "" {
+			title = ref.FileID
+		}
 		now := time.Now()
-		files = append(files, &models.Attach{ID: utils.ObjectId(), FileID: utils.ObjectId(), ServerFileID: ref.FileID, NoteID: local.NoteID, UserID: local.UserID, Title: title, Type: ref.Type, Path: path, IsAttach: true, CreatedTime: &now})
+		item := &models.Attach{ID: utils.ObjectId(), FileID: utils.ObjectId(), ServerFileID: ref.FileID, NoteID: local.NoteID, UserID: local.UserID, Title: title, Type: ref.Type, Path: path, IsAttach: true, CreatedTime: &now}
+		if previous := byServer[ref.FileID]; previous != nil {
+			item.ID, item.FileID, item.CreatedTime = previous.ID, previous.FileID, previous.CreatedTime
+		}
+		files = append(files, item)
 	}
 	// A local edit during download must not be overwritten.
 	return s.db.ReplaceSyncedAttachments(local.UserID, local.NoteID, remote.Usn, files)

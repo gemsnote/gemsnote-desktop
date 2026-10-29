@@ -136,6 +136,8 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) bool {
 	}
 
 	switch {
+	case path == "/api2/desktop/attachments/retry" && method == http.MethodPost:
+		h.retryAttachment(w, r)
 	case path == "/api2/desktop/about" && method == http.MethodGet:
 		h.writeJSON(w, DesktopAbout(h.Version))
 	case path == "/api2/bootstrap" && method == http.MethodGet:

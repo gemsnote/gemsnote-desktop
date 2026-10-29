@@ -317,7 +317,7 @@ func (c *Client) GetAttachContext(ctx context.Context, fileID, localPath string)
 		return "", "", err
 	}
 	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-		return "", "", fmt.Errorf("download attachment %s failed (HTTP %d)", fileID, resp.StatusCode())
+		return "", "", &AttachmentDownloadError{FileID: fileID, Status: resp.StatusCode()}
 	}
 
 	contentDisposition := resp.Header().Get("Content-Disposition")

@@ -886,9 +886,11 @@ func (h *Handler) listHistories(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) attachItem(a *models.Attach) map[string]any {
 	size := int64(0)
+	state := "missing"
 	if a.Path != "" {
-		if info, err := os.Stat(a.Path); err == nil {
+		if info, err := os.Stat(a.Path); err == nil && info.Mode().IsRegular() {
 			size = info.Size()
+			state = "ready"
 		}
 	}
 	return map[string]any{
@@ -897,6 +899,7 @@ func (h *Handler) attachItem(a *models.Attach) map[string]any {
 		"Name":        a.Title,
 		"Type":        a.Type,
 		"Size":        size,
+		"CacheState":  state,
 		"CreatedTime": timeOrNow(a.CreatedTime),
 	}
 }

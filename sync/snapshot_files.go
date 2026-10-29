@@ -227,6 +227,12 @@ func (s *SyncService) downloadSnapshotFiles(ctx context.Context, client *api.Cli
 		if r.err != nil {
 			failed++
 			logrus.Warnf("Snapshot file download failed: id=%s error=%v", r.job.id, r.err)
+			if r.job.attachment && api.IsAttachmentMissing(r.err) {
+				now := time.Now()
+				if err := s.db.InsertAttach(&models.Attach{ID: utils.ObjectId(), FileID: utils.ObjectId(), ServerFileID: r.job.id, NoteID: r.job.noteID, UserID: userID, Title: r.job.title, IsAttach: true, CreatedTime: &now}); err != nil {
+					logrus.Warnf("Missing attachment placeholder persistence failed: id=%s error=%v", r.job.id, err)
+				}
+			}
 		} else {
 			now := time.Now()
 			var err error
