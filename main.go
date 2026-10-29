@@ -97,6 +97,7 @@ func main() {
 		OnSyncProgress:   app.GetSyncProgress,
 		OnWaitForImage:   app.sync.WaitForBackgroundImage,
 		OnDownloadStatus: app.sync.GetDownloadStatus,
+		OnExportNote:     app.saveNoteExport,
 		OnInitialSync: func() (any, error) {
 			return app.InitialSync(), nil
 		},

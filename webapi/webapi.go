@@ -47,6 +47,7 @@ type Handler struct {
 	OnWaitForImage   func(context.Context, string)
 	OnDownloadStatus func() models.DownloadStatus
 	OnSharedDownload func()
+	OnExportNote     func(filename, content, language string) (bool, error)
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -136,6 +137,8 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) bool {
 	}
 
 	switch {
+	case path == "/api2/desktop/export" && method == http.MethodPost:
+		h.exportNote(w, r)
 	case path == "/api2/desktop/attachments/retry" && method == http.MethodPost:
 		h.retryAttachment(w, r)
 	case path == "/api2/desktop/about" && method == http.MethodGet:
