@@ -175,8 +175,10 @@ Linux/Windows 使用空实现。macOS 的 Go 测试会编译原生菜单 fixture
 
 ### 共享导航和接收者归属
 
+`Sharing.Suggestions` 原样保留按账号隔离的历史接收者提示，不能因本地尚未缓存对应个人笔记而过滤；提示不携带邮箱。共享 Vue 输入同时接受用户名和邮箱，仍使用原 `emails` 表单字段。
+
 API2 共享快照创建响应的 `Sharing` 保存到按服务器地址和用户 ID 隔离的 SQLite 配置缓存。`webapi/shared_navigation.go` 在 bootstrap 中转换个人笔记和笔记本的服务端 ID 为本地 ID，并且只展示当前已发布共享缓存中未撤销的原文。归类共享不进入个人 dirty/push 队列，数量在共享前端中合并展示。
 
 本地 `POST /api2/shared/move` 接收前端 ID，校验本地可见原文和个人目标笔记本，再用目标的服务端 ID 向服务端发送 JSON；成功后更新归属缓存。复制也使用目标的服务端 ID。未同步的目标笔记本须先同步，联网失败不会伪装成移动成功。重新同步清除该账号的共享导航缓存。
 
-测试：`go test ./webapi ./sharedsync ./db ./api`；共享前端构建后，在服务端仓库执行 `node frontend/tests/shared-notes.mjs` 验证 Web/desktop 中英文共享导航、只读按钮、移动计数、复制和 RT/MD 标记。
+测试：`go test ./webapi ./sharedsync ./db ./api`；共享前端构建后，在服务端仓库执行 `node frontend/tests/shared-notes.mjs` 验证 Web/desktop 中英文共享导航、只读按钮、移动计数、复制、RT/MD 标记，以及用户名/邮箱共享、历史接收者的键盘/点击选择。

@@ -122,3 +122,22 @@ func TestOutgoingSharingMapsLocalNoteIDs(t *testing.T) {
 		t.Fatalf("members failed: %v", response)
 	}
 }
+
+func TestSharingSuggestionsSurviveWithoutCachedOwnedNotes(t *testing.T) {
+	e := newTestEnv(t)
+	uid, _ := e.login(t)
+	user, _ := e.db.GetActiveUser()
+	encoded, _ := json.Marshal(sharingNavigation{Suggestions: []sharingRecipient{{UserId: "reader", Username: "Reader"}}})
+	if err := e.db.SetConfig("sharing:"+db.SharedAccountID(user.Host, uid), string(encoded)); err != nil {
+		t.Fatal(err)
+	}
+	nav := e.handler.cachedSharing(user)
+	if len(nav.Suggestions) != 1 || nav.Suggestions[0].Username != "Reader" || len(nav.Recipients) != 0 {
+		t.Fatalf("lost suggestions: %+v", nav)
+	}
+	other := *user
+	other.Host = "https://other.test"
+	if len(e.handler.cachedSharing(&other).Suggestions) != 0 {
+		t.Fatal("cross-server suggestions leaked")
+	}
+}

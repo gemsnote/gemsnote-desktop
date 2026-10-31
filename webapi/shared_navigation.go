@@ -14,6 +14,7 @@ type sharingRecipient struct {
 	NoteIds  []string
 }
 type sharingNavigation struct {
+	Suggestions  []sharingRecipient
 	Recipients   []sharingRecipient
 	Placements   map[string]string
 	PlacedShares []map[string]any
@@ -22,12 +23,15 @@ type sharingNavigation struct {
 // Stored IDs are remote IDs. Translate only at the local bridge boundary and
 // include received notes only if present in the published permission cache.
 func (h *Handler) cachedSharing(user *models.User) sharingNavigation {
-	result := sharingNavigation{Recipients: []sharingRecipient{}, Placements: map[string]string{}, PlacedShares: []map[string]any{}}
+	result := sharingNavigation{Suggestions: []sharingRecipient{}, Recipients: []sharingRecipient{}, Placements: map[string]string{}, PlacedShares: []map[string]any{}}
 	accountID := db.SharedAccountID(user.Host, user.ID)
 	raw, _ := h.DB.GetConfig("sharing:" + accountID)
 	var cached sharingNavigation
 	if json.Unmarshal([]byte(raw), &cached) != nil {
 		return result
+	}
+	if cached.Suggestions != nil {
+		result.Suggestions = cached.Suggestions
 	}
 	for _, recipient := range cached.Recipients {
 		ids := []string{}
