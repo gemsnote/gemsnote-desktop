@@ -182,3 +182,17 @@ API2 共享快照创建响应的 `Sharing` 保存到按服务器地址和用户 
 本地 `POST /api2/shared/move` 接收前端 ID，校验本地可见原文和个人目标笔记本，再用目标的服务端 ID 向服务端发送 JSON；成功后更新归属缓存。复制也使用目标的服务端 ID。未同步的目标笔记本须先同步，联网失败不会伪装成移动成功。重新同步清除该账号的共享导航缓存。
 
 测试：`go test ./webapi ./sharedsync ./db ./api`；共享前端构建后，在服务端仓库执行 `node frontend/tests/shared-notes.mjs` 验证 Web/desktop 中英文共享导航、只读按钮、移动计数、复制、RT/MD 标记，以及用户名/邮箱共享、历史接收者的键盘/点击选择。
+
+
+## Markdown Mermaid 预览
+
+Desktop 复用服务端仓库的 Vue `NotePreview` / `MermaidDiagram` 组件。
+`bash build-frontend.sh` 自动构建并复制 `frontend/dist/assets/mermaid/`，Wails 将离线渲染包嵌入程序。
+无需通过 API2 获取图表，离线打开本地 Markdown 笔记即可显示 `mermaid` 代码块。
+点击图表可放大，展开“图表源码”可选择复制；编辑与同步始终使用原始 Markdown。
+语法错误或超出渲染限制时保留源码和局部提示。
+
+渲染 iframe 不开放同源权限，不连接本地 bridge；图表与账号数据隔离。
+依赖版本、限制和实现见[共用预览说明](https://github.com/gemsnote/gemsnote/blob/main/docs/development/MERMAID.md)。
+构建后在服务端仓库运行 `node frontend/tests/mermaid.mjs`，覆盖 Web 和 Desktop 界面模式。
+发布前仍须在目标平台 Wails WebView 验证；Chromium 通过不代表所有 WebKit 系统版本通过。
