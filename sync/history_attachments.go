@@ -14,6 +14,9 @@ import (
 // Metadata APIs include the complete file set. Incremental sync must apply
 // that set as well as the body, including an explicitly empty attachment set.
 func (s *SyncService) syncAttachmentSet(remote *models.Note) error {
+	if err := s.api.Context().Err(); err != nil {
+		return err
+	}
 	remoteID := remote.NoteID
 	if remote.ServerNoteID != "" {
 		remoteID = remote.ServerNoteID
@@ -38,6 +41,9 @@ func (s *SyncService) syncAttachmentSet(remote *models.Note) error {
 	}
 	files := []*models.Attach{}
 	for _, ref := range remote.Files {
+		if err := s.api.Context().Err(); err != nil {
+			return err
+		}
 		if ref == nil || !ref.IsAttach {
 			continue
 		}

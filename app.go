@@ -31,6 +31,10 @@ type App struct {
 	api            *api.Client
 	sync           *sync.SyncService
 	syncRunMu      stdsync.Mutex
+	syncControlMu  stdsync.Mutex
+	syncOperation  *syncOperation
+	syncSequence   uint64
+	syncBlocked    bool
 	syncProgressMu stdsync.RWMutex
 	syncProgress   models.SyncProgress
 	sessionLive    atomic.Bool
@@ -45,7 +49,7 @@ func NewApp(database *db.Database) *App {
 	app := &App{
 		db:   database,
 		api:  client,
-		sync: sync.NewSyncService(database, client),
+		sync: sync.NewSyncService(database, api.NewClient()),
 		// Shared synchronization changes its API authentication context while it
 		// runs, so it must not share a mutable client with personal sync.
 		sharedSync: sharedsync.New(database, api.NewClient(), files),
@@ -69,7 +73,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 func (a *App) shutdown(ctx context.Context) {
-	a.sync.StopBackgroundDownloads()
+	a.stopSessionSync()
 	a.saveCurrentState()
 	a.db.Close()
 }
@@ -114,7 +118,7 @@ func (a *App) GetAttachDir() string {
 // ==================== User Operations ====================
 
 func (a *App) Login(email, password, host string) map[string]interface{} {
-	a.sync.StopBackgroundDownloads()
+	a.stopSessionSync()
 	resp, err := a.api.Auth(email, password, host)
 	if err != nil {
 		return map[string]interface{}{"Ok": false, "Msg": err.Error()}
@@ -163,7 +167,7 @@ func (a *App) Login(email, password, host string) map[string]interface{} {
 	a.api.SetToken(resp.Token)
 	a.api.SetHost(host)
 	a.files.InitUserDirs(user.ID)
-	a.sessionLive.Store(true)
+	a.SetSessionLive(true)
 	serverVersion, versionErr := a.api.GetServerVersion()
 	result := map[string]interface{}{
 		"Ok":       true,
@@ -213,7 +217,7 @@ func (a *App) Logout() map[string]interface{} {
 			return map[string]interface{}{"Ok": false, "Msg": "syncFailed"}
 		}
 	}
-	a.sync.StopBackgroundDownloads()
+	a.stopSessionSync()
 	a.api.Logout()
 	a.api.SetToken("")
 	a.api.SetHost("")
@@ -244,7 +248,8 @@ func (a *App) GetAllUsers() []map[string]interface{} {
 }
 
 func (a *App) SwitchUser(userID string) {
-	a.sync.StopBackgroundDownloads()
+	a.stopSessionSync()
+	defer a.SetSessionLive(true)
 	a.files.SwitchUser(userID)
 	user, _ := a.db.GetUser(userID)
 	if user != nil {
@@ -313,11 +318,10 @@ func (a *App) FullSyncForce() map[string]interface{} {
 	err := a.runFullSync(true)
 	result := map[string]interface{}{"Ok": true}
 	if err != nil {
-		result = map[string]interface{}{"Ok": false, "Msg": err.Error()}
+		result = syncFailure(err)
 	}
-	// Mark the event so the SPA can distinguish a full-sync success (which
-	// gets a green confirmation) from an incremental sync (which only clears
-	// its pending marker). Keep the Wails method return payload unchanged.
+	// Mark full-sync completion so the SPA closes its progress dialog.
+	// Incremental sync only refreshes the pending marker.
 	eventResult := map[string]interface{}{}
 	for key, value := range result {
 		eventResult[key] = value
@@ -342,14 +346,20 @@ func (a *App) InitialSync() map[string]interface{} {
 
 func (a *App) resetSync(requireEmpty bool) map[string]interface{} {
 	result := map[string]interface{}{"Ok": false, "Full": true, "Reset": true}
-	a.syncRunMu.Lock()
-	defer a.syncRunMu.Unlock()
-	a.beginSyncProgress("reset")
-	defer a.finishSyncProgress()
+	op, err := a.beginSyncOperation("reset")
+	if err != nil {
+		return syncFailure(err)
+	}
+	defer func() {
+		if a.endSyncOperation(op) {
+			delete(result, "Msg")
+			result["Ok"], result["Cancelled"] = true, true
+		}
+		a.emitSyncFinished(result)
+	}()
 	user, err := a.db.GetActiveUser()
 	if err != nil || user == nil || user.IsLocal || user.Host == "" || user.Token == "" || !utils.IsValidObjectId(user.ID) {
 		result["Msg"] = "resetSyncUnavailable"
-		a.emitSyncFinished(result)
 		return result
 	}
 	if requireEmpty {
@@ -359,22 +369,27 @@ func (a *App) resetSync(requireEmpty bool) map[string]interface{} {
 			if err != nil {
 				result["Msg"] = fmt.Sprintf("read local account cache: %v", err)
 			}
-			a.emitSyncFinished(result)
 			return result
 		}
 	}
-	a.api.SetHost(user.Host)
-	a.api.SetToken(user.Token)
-	if _, err := a.api.GetLastSyncState(); err != nil {
+	client := api.NewClient()
+	client.SetContext(op.ctx)
+	client.SetHost(user.Host)
+	client.SetToken(user.Token)
+	if _, err := client.GetLastSyncState(); err != nil {
 		result["Msg"] = fmt.Sprintf("server unavailable before reset: %v", err)
-		a.emitSyncFinished(result)
 		return result
 	}
 	accountID := db.SharedAccountID(user.Host, user.ID)
 	// No previous account download may write after the reset clears rows/files.
 	a.sync.StopBackgroundDownloads()
 	a.recordSyncProgress(models.SyncProgress{Stage: "resetting"})
+	a.sharedSync.SuspendAndWait()
+	defer a.sharedSync.Resume()
 	err = a.sharedSync.RunExclusive(func() error {
+		if err := op.ctx.Err(); err != nil {
+			return err
+		}
 		if err := a.db.ResetAccountCache(user.ID, accountID); err != nil {
 			return err
 		}
@@ -392,7 +407,6 @@ func (a *App) resetSync(requireEmpty bool) map[string]interface{} {
 		result["Ok"] = true
 		a.SetAutoSyncPaused(false)
 	}
-	a.emitSyncFinished(result)
 	return result
 }
 
@@ -418,10 +432,16 @@ func (a *App) IsAutoSyncPaused() bool {
 }
 
 func (a *App) SetSessionLive(live bool) {
-	a.sessionLive.Store(live)
 	if !live {
-		a.sync.StopBackgroundDownloads()
+		a.stopSessionSync()
+		return
 	}
+	a.syncControlMu.Lock()
+	a.syncBlocked = false
+	a.restoreSession()
+	a.sharedSync.Resume()
+	a.sessionLive.Store(true)
+	a.syncControlMu.Unlock()
 }
 
 func (a *App) CanAutoSync() bool {
@@ -917,7 +937,7 @@ func (a *App) DeleteNoteHistory(noteID string) {
 func (a *App) FullSync() map[string]interface{} {
 	info, err := a.runFullSyncInfo()
 	if err != nil {
-		return map[string]interface{}{"Ok": false, "Msg": err.Error()}
+		return syncFailure(err)
 	}
 
 	return map[string]interface{}{
@@ -945,13 +965,14 @@ func (a *App) IncrSync() map[string]interface{} {
 	// Coalesce repeated toolbar clicks and automatic sync triggers. Queuing a
 	// second complete sync behind the first only increases SQLite contention
 	// and provides no newer local snapshot than the running pass will upload.
-	if !a.syncRunMu.TryLock() {
-		return map[string]interface{}{"Ok": true, "AlreadyRunning": true}
+	op, err := a.beginSyncOperation("incremental")
+	if err != nil {
+		return syncFailure(err)
 	}
-	defer a.syncRunMu.Unlock()
+	defer a.endSyncOperation(op)
 	info, err := a.sync.IncrSync()
 	if err != nil {
-		result := map[string]interface{}{"Ok": false, "Msg": err.Error()}
+		result := syncFailure(err)
 		a.emitSyncFinished(result)
 		return result
 	}
@@ -979,24 +1000,42 @@ func (a *App) IncrSync() map[string]interface{} {
 	return result
 }
 
-func (a *App) runFullSync(force bool) error {
-	a.syncRunMu.Lock()
-	defer a.syncRunMu.Unlock()
-	a.beginSyncProgress("full")
-	defer a.finishSyncProgress()
-	if force {
-		return a.sync.ForceFullSync()
+func (a *App) runFullSync(force bool) (err error) {
+	op, err := a.beginSyncOperation("full")
+	if err != nil {
+		return err
 	}
-	_, err := a.sync.FullSync()
+	defer func() {
+		if a.endSyncOperation(op) {
+			err = context.Canceled
+		}
+	}()
+	if force {
+		err = a.sync.ForceFullSync()
+	} else {
+		_, err = a.sync.FullSync()
+	}
+	if op.ctx.Err() != nil {
+		return op.ctx.Err()
+	}
 	return err
 }
 
-func (a *App) runFullSyncInfo() (*models.SyncInfo, error) {
-	a.syncRunMu.Lock()
-	defer a.syncRunMu.Unlock()
-	a.beginSyncProgress("full")
-	defer a.finishSyncProgress()
-	return a.sync.FullSync()
+func (a *App) runFullSyncInfo() (info *models.SyncInfo, err error) {
+	op, err := a.beginSyncOperation("full")
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if a.endSyncOperation(op) {
+			err = context.Canceled
+		}
+	}()
+	info, err = a.sync.FullSync()
+	if op.ctx.Err() != nil {
+		return nil, op.ctx.Err()
+	}
+	return info, err
 }
 
 func (a *App) IsSyncing() bool {
@@ -1284,7 +1323,7 @@ func (a *App) ConflictIsFixed(noteID string) {
 // ==================== Sync Control ====================
 
 func (a *App) StopSync() {
-	a.sync.Stop()
+	a.CancelSync(a.GetSyncProgress().RunID)
 }
 
 func (a *App) SetSyncProgressCallback() {

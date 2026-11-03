@@ -23,6 +23,7 @@ func (a *App) finishSyncProgress() {
 func (a *App) recordSyncProgress(progress models.SyncProgress) models.SyncProgress {
 	a.syncProgressMu.Lock()
 	defer a.syncProgressMu.Unlock()
+	progress.RunID = a.syncProgress.RunID
 	progress.Mode = a.syncProgress.Mode
 	progress.Running = a.syncProgress.Running
 	a.syncProgress = progress

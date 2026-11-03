@@ -94,11 +94,14 @@ func (c *Client) GetLastSyncState() (*LastSyncStateResponse, error) {
 	var err error
 	for attempt := 1; attempt <= 3; attempt++ {
 		resp, err = c.get("user/getSyncState", nil)
+		if c.Context().Err() != nil {
+			break
+		}
 		if err == nil && resp.StatusCode() < 500 {
 			break
 		}
 		if attempt < 3 {
-			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+			c.waitRetry(time.Duration(attempt) * 500 * time.Millisecond)
 		}
 	}
 	if err != nil {
@@ -173,11 +176,14 @@ func (c *Client) GetSyncNotesWithContent(afterUsn int64, maxEntry int) ([]*model
 	var err error
 	for attempt := 1; attempt <= 3; attempt++ {
 		resp, err = c.getWithClient(c.contentClient, "note/getSyncNotesWithContent", params)
+		if c.Context().Err() != nil {
+			break
+		}
 		if err == nil && resp.StatusCode() < 500 {
 			break
 		}
 		if attempt < 3 {
-			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+			c.waitRetry(time.Duration(attempt) * 500 * time.Millisecond)
 		}
 	}
 	if err != nil {
@@ -226,11 +232,14 @@ func (c *Client) GetNoteContent(noteID string) (string, error) {
 	var err error
 	for attempt := 1; attempt <= 3; attempt++ {
 		resp, err = c.getWithClient(c.contentClient, "note/getNoteContent", map[string]string{"noteId": noteID})
+		if c.Context().Err() != nil {
+			break
+		}
 		if err == nil && (resp.StatusCode() < 500 || attempt == 3) {
 			break
 		}
 		if attempt < 3 {
-			time.Sleep(time.Duration(attempt) * 300 * time.Millisecond)
+			c.waitRetry(time.Duration(attempt) * 300 * time.Millisecond)
 		}
 	}
 	if err != nil {
@@ -269,7 +278,7 @@ func (c *Client) GetNote(noteID string) (*models.Note, error) {
 }
 
 func (c *Client) GetImage(fileID, localPath string) (string, error) {
-	return c.GetImageContext(context.Background(), fileID, localPath)
+	return c.GetImageContext(c.Context(), fileID, localPath)
 }
 
 func (c *Client) GetImageContext(ctx context.Context, fileID, localPath string) (string, error) {
@@ -306,7 +315,7 @@ func (c *Client) GetImageContext(ctx context.Context, fileID, localPath string) 
 }
 
 func (c *Client) GetAttach(fileID, localPath string) (string, string, error) {
-	return c.GetAttachContext(context.Background(), fileID, localPath)
+	return c.GetAttachContext(c.Context(), fileID, localPath)
 }
 
 func (c *Client) GetAttachContext(ctx context.Context, fileID, localPath string) (string, string, error) {

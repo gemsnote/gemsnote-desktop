@@ -443,3 +443,52 @@ func TestProfileRefreshAcceptsDefaultOrMissingAvatar(t *testing.T) {
 		})
 	}
 }
+
+func TestLoginStopsOldSessionBeforeChangingServer(t *testing.T) {
+	e := newTestEnv(t)
+	userID, _ := e.login(t)
+	old := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("old server was contacted after account switch")
+		http.NotFound(w, r)
+	}))
+	defer old.Close()
+	next := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api2/auth/login" {
+			w.Write([]byte(api2LoginResponse(userID)))
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer test-token" {
+			t.Error("new session token was not used")
+		}
+		w.Write([]byte(`{"Ok":true}`))
+	}))
+	defer next.Close()
+	e.handler.Proxy = NewServerProxy(e.db, e.handler.Files)
+	e.handler.Proxy.SetHost(old.URL)
+	e.db.UpdateUserHost(userID, old.URL)
+	stopped := false
+	e.handler.OnBeforeLogin = func() {
+		host, _ := e.db.GetConfig("host")
+		if host != old.URL {
+			t.Error("server changed before old sync writers stopped")
+		}
+		stopped = true
+	}
+	e.handler.OnSessionChanged = func(live bool) {
+		if !live || !stopped {
+			t.Error("new session resumed before old workers stopped")
+		}
+		active, _ := e.db.GetActiveUser()
+		if active == nil || active.Host != next.URL || active.Token != "test-token" {
+			t.Error("new session adopted stale credentials")
+		}
+	}
+	var result map[string]any
+	e.postJSON(t, "/api2/auth/session", url.Values{"host": {next.URL}, "email": {"tester"}, "pwd": {"secret"}}, &result)
+	if result["Ok"] != true {
+		t.Fatal(result)
+	}
+	if _, _, _, err := e.handler.Proxy.call(http.MethodGet, "/api2/user/info", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -868,3 +868,30 @@ func TestLocalHistoryRestoreRoute(t *testing.T) {
 		t.Fatalf("%+v %v", n, err)
 	}
 }
+
+func TestCancelSyncRequiresPostAuthenticationAndRunID(t *testing.T) {
+	e := newTestEnv(t)
+	var canceled uint64
+	e.handler.OnCancelSync = func(id uint64) map[string]interface{} {
+		canceled = id
+		return map[string]interface{}{"Ok": true, "Cancelled": true}
+	}
+	var result map[string]any
+	e.postJSON(t, "/api2/web/cancelSync", url.Values{"runId": {"7"}}, &result)
+	if canceled != 0 || result["Msg"] != "NOTLOGIN" {
+		t.Fatalf("unauthenticated cancel: %v", result)
+	}
+	e.login(t)
+	e.get(t, "/api2/web/cancelSync?runId=7")
+	if canceled != 0 {
+		t.Fatal("GET canceled sync")
+	}
+	e.postJSON(t, "/api2/web/cancelSync", url.Values{}, &result)
+	if canceled != 0 || result["Msg"] != "invalidRequest" {
+		t.Fatalf("missing ID: %v", result)
+	}
+	e.postJSON(t, "/api2/web/cancelSync", url.Values{"runId": {"7"}}, &result)
+	if canceled != 7 || result["Cancelled"] != true {
+		t.Fatalf("cancel: %v", result)
+	}
+}

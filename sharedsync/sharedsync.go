@@ -1,6 +1,7 @@
 package sharedsync
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -30,9 +31,12 @@ type Service struct {
 	api   *api.Client
 	files *service.FileService
 
-	mu      sync.Mutex
-	workMu  sync.Mutex
-	syncing bool
+	mu        sync.Mutex
+	workMu    sync.Mutex
+	syncing   bool
+	suspended bool
+	cancel    context.CancelFunc
+	done      chan struct{}
 
 	OnRevocation func(noteIDs []string)
 }
@@ -58,22 +62,47 @@ func (s *Service) SyncOnce() error {
 
 func (s *Service) withLock(run func() error) error {
 	s.mu.Lock()
-	if s.syncing {
+	if s.syncing || s.suspended {
 		s.mu.Unlock()
 		return nil
 	}
 	s.syncing = true
+	ctx, cancel := context.WithCancel(context.Background())
+	s.cancel = cancel
+	s.done = make(chan struct{})
+	s.api.SetContext(ctx)
 	s.mu.Unlock()
 
 	defer func() {
 		s.mu.Lock()
 		s.syncing = false
+		cancel()
+		close(s.done)
+		s.cancel = nil
 		s.mu.Unlock()
 	}()
 	s.workMu.Lock()
 	defer s.workMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return run()
 }
+
+// SuspendAndWait cancels requests and joins writers before changing accounts.
+func (s *Service) SuspendAndWait() {
+	s.mu.Lock()
+	s.suspended = true
+	done := s.done
+	if s.cancel != nil {
+		s.cancel()
+	}
+	s.mu.Unlock()
+	if done != nil {
+		<-done
+	}
+}
+func (s *Service) Resume() { s.mu.Lock(); s.suspended = false; s.mu.Unlock() }
 
 // RunExclusive waits for any in-flight shared cache write before an account
 // reset and prevents the background downloader from recreating rows mid-reset.

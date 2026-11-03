@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/gemsnote/gemsnote/db"
@@ -43,6 +44,7 @@ type Handler struct {
 	OnFullSync       func() (any, error)
 	OnResetSync      func() (any, error)
 	OnInitialSync    func() (any, error)
+	OnCancelSync     func(uint64) map[string]interface{}
 	OnSyncProgress   func() models.SyncProgress
 	OnWaitForImage   func(context.Context, string)
 	OnDownloadStatus func() models.DownloadStatus
@@ -104,6 +106,7 @@ func isGetApiPath(path string) bool {
 		"/api2/web/fullSync",
 		"/api2/web/resetSync",
 		"/api2/web/syncProgress",
+		"/api2/web/cancelSync",
 		"/api2/web/downloadStatus",
 		"/api2/captcha/",
 		"/captcha/",
@@ -178,6 +181,16 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) bool {
 		h.syncNow(w, h.OnSync)
 	case path == "/api2/web/fullSync" && method == http.MethodPost:
 		h.syncNow(w, h.OnFullSync)
+	case path == "/api2/web/cancelSync" && method == http.MethodPost:
+		if h.requireUser(w) == nil {
+			return true
+		}
+		runID, err := strconv.ParseUint(h.form(r, "runId"), 10, 64)
+		if err != nil || runID == 0 || h.OnCancelSync == nil {
+			h.fail(w, "invalidRequest")
+			return true
+		}
+		h.writeJSON(w, h.OnCancelSync(runID))
 	case path == "/api2/web/syncProgress" && method == http.MethodGet:
 		w.Header().Set("Cache-Control", "no-store")
 		if h.requireUser(w) != nil {
@@ -259,9 +272,6 @@ func (h *Handler) route(w http.ResponseWriter, r *http.Request) bool {
 	case path == "/api2/file/getAttach" && method == http.MethodGet:
 		h.downloadAttach(w, r)
 	case path == "/api2/auth/session":
-		if host := h.form(r, "host"); host != "" && h.Proxy != nil {
-			h.Proxy.SetHost(host)
-		}
 		h.doLogin(w, r)
 	case path == "/api2/auth/register":
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")

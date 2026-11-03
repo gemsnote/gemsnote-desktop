@@ -35,6 +35,9 @@ func (s *SyncService) syncNotebooks(afterUsn int64, syncInfo *models.SyncInfo) e
 		}
 
 		for _, nb := range notebooks {
+			if err := s.api.Context().Err(); err != nil {
+				return err
+			}
 			// A complete snapshot is a union merge. A remote tombstone must not
 			// erase the only remaining local copy after a database switch.
 			if afterUsn < 0 && nb.IsDeleted {
@@ -79,6 +82,9 @@ func (s *SyncService) syncNotebooks(afterUsn int64, syncInfo *models.SyncInfo) e
 }
 
 func (s *SyncService) processNotebookSync(serverNb *models.Notebook, syncInfo *models.SyncInfo) error {
+	if err := s.api.Context().Err(); err != nil {
+		return err
+	}
 	if serverNb == nil {
 		return nil
 	}
@@ -142,6 +148,9 @@ func (s *SyncService) syncNotes(afterUsn int64, syncInfo *models.SyncInfo) error
 }
 
 func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, withContentSnapshot bool) error {
+	if err := s.api.Context().Err(); err != nil {
+		return err
+	}
 	logrus.Info("Syncing notes...")
 
 	currentUsn := afterUsn
@@ -171,6 +180,9 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 		}
 
 		for _, note := range notes {
+			if err := s.api.Context().Err(); err != nil {
+				return err
+			}
 			if afterUsn < 0 && note.IsDeleted {
 				continue
 			}
@@ -224,6 +236,9 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 }
 
 func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.SyncInfo, repair ...bool) error {
+	if err := s.api.Context().Err(); err != nil {
+		return err
+	}
 	remoteNoteID := serverNote.NoteID
 	if serverNote.IsDeleted {
 		localID, _ := s.db.GetLocalNoteID(serverNote.NoteID)
@@ -525,12 +540,18 @@ func (s *SyncService) deleteNoteFiles(noteID string) {
 }
 
 func (s *SyncService) syncImagesAndAttachs(syncInfo *models.SyncInfo) error {
+	if err := s.api.Context().Err(); err != nil {
+		return err
+	}
 	logrus.Info("Syncing images and attachments...")
 
 	notes := syncInfo.Note.Adds
 	notes = append(notes, syncInfo.Note.Updates...)
 
 	for i, noteID := range notes {
+		if err := s.api.Context().Err(); err != nil {
+			return err
+		}
 		note, err := s.db.GetNote(noteID)
 		if err != nil || note == nil {
 			continue
@@ -571,6 +592,9 @@ func (s *SyncService) syncTags(afterUsn int64, syncInfo *models.SyncInfo) error 
 		}
 
 		for _, tag := range tags {
+			if err := s.api.Context().Err(); err != nil {
+				return err
+			}
 			if err := s.processTagSync(tag, syncInfo); err != nil {
 				logrus.Errorf("Process tag error: %v", err)
 				continue
@@ -600,6 +624,9 @@ func (s *SyncService) syncTags(afterUsn int64, syncInfo *models.SyncInfo) error 
 }
 
 func (s *SyncService) processTagSync(serverTag *models.Tag, syncInfo *models.SyncInfo) error {
+	if err := s.api.Context().Err(); err != nil {
+		return err
+	}
 	userID := s.db.GetCurrentUserID()
 
 	if serverTag.LocalIsDelete {

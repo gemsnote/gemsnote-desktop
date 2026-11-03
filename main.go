@@ -81,7 +81,7 @@ func main() {
 		Proxy:         serverProxy,
 		Version:       AppVersion,
 		Dist:          dist,
-		OnBeforeLogin: app.sync.StopBackgroundDownloads,
+		OnBeforeLogin: app.stopSessionSync,
 		OnLogin: func(hasLocalCache bool) (any, error) {
 			if hasLocalCache {
 				app.SetAutoSyncPaused(true)
@@ -95,6 +95,7 @@ func main() {
 		},
 		OnSessionChanged: app.SetSessionLive,
 		OnSyncProgress:   app.GetSyncProgress,
+		OnCancelSync:     app.CancelSync,
 		OnWaitForImage:   app.sync.WaitForBackgroundImage,
 		OnDownloadStatus: app.sync.GetDownloadStatus,
 		OnExportNote:     app.saveNoteExport,
@@ -137,10 +138,9 @@ func main() {
 			return result, nil
 		},
 		OnFullSync: func() (any, error) {
-			// Refresh profile information on full sync, but keep personal data
-			// synchronization available if the profile/avatar request fails.
+			// The sync service refreshes the avatar in an account-bound background
+			// task; do not block here using the mutable login proxy.
 			app.SetAutoSyncPaused(false)
-			serverProxy.RefreshUserProfile()
 			result := app.FullSyncForce()
 			return result, nil
 		},

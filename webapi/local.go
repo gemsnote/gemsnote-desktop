@@ -1192,6 +1192,9 @@ func (h *Handler) doLogin(w http.ResponseWriter, r *http.Request) {
 	if h.OnBeforeLogin != nil {
 		h.OnBeforeLogin()
 	}
+	if host := h.form(r, "host"); host != "" && h.Proxy != nil {
+		h.Proxy.SetHost(host)
+	}
 
 	// A configured server is always authoritative for remote login. Do not
 	// reuse a local user with the same username/email: that would show the old

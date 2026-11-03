@@ -18,6 +18,9 @@ import (
 var localImageRe = regexp.MustCompile(`(?:leanote://file/getImage|/api2/file/getImage)\?fileId=([a-zA-Z0-9]{24})`)
 
 func (s *SyncService) sendChanges(syncInfo *models.SyncInfo) error {
+	if err := s.api.Context().Err(); err != nil {
+		return err
+	}
 	logrus.Info("Sending changes...")
 
 	userID := s.db.GetCurrentUserID()
@@ -46,6 +49,9 @@ func (s *SyncService) sendChanges(syncInfo *models.SyncInfo) error {
 }
 
 func (s *SyncService) sendNotebookChanges(userID string, syncInfo *models.SyncInfo) error {
+	if err := s.api.Context().Err(); err != nil {
+		return err
+	}
 	notebooks, err := s.db.GetDirtyNotebooks(userID)
 	if err != nil {
 		return err
@@ -54,6 +60,9 @@ func (s *SyncService) sendNotebookChanges(userID string, syncInfo *models.SyncIn
 	// ParentNotebookId can be translated to the newly assigned server ID.
 	byID := make(map[string]*models.Notebook, len(notebooks))
 	for _, nb := range notebooks {
+		if err := s.api.Context().Err(); err != nil {
+			return err
+		}
 		byID[nb.NotebookID] = nb
 	}
 	// Topologically order the dirty tree. A simple depth sort can still leave
@@ -75,12 +84,18 @@ func (s *SyncService) sendNotebookChanges(userID string, syncInfo *models.SyncIn
 		ordered = append(ordered, nb)
 	}
 	for _, nb := range notebooks {
+		if err := s.api.Context().Err(); err != nil {
+			return err
+		}
 		visit(nb)
 	}
 	notebooks = ordered
 
 	var firstErr error
 	for _, nb := range notebooks {
+		if err := s.api.Context().Err(); err != nil {
+			return err
+		}
 		if nb.LocalIsNew && nb.LocalIsDelete {
 			s.db.DeleteLocalNotebook(nb.NotebookID)
 			continue
@@ -133,6 +148,9 @@ func (s *SyncService) sendNotebookChanges(userID string, syncInfo *models.SyncIn
 }
 
 func (s *SyncService) sendNoteChanges(userID string, syncInfo *models.SyncInfo) error {
+	if err := s.api.Context().Err(); err != nil {
+		return err
+	}
 	notes, err := s.db.GetDirtyNotes(userID)
 	if err != nil {
 		return err
@@ -140,6 +158,9 @@ func (s *SyncService) sendNoteChanges(userID string, syncInfo *models.SyncInfo) 
 
 	var firstErr error
 	for _, note := range notes {
+		if err := s.api.Context().Err(); err != nil {
+			return err
+		}
 		if attachments, err := s.db.GetAttachsByNote(note.NoteID); err != nil {
 			if firstErr == nil {
 				firstErr = err
@@ -331,6 +352,9 @@ func (s *SyncService) recreateMissingNote(note *models.Note) (*models.Note, stri
 	addCandidate(note.NotebookID, note.NotebookID)
 	if notebooks, err := s.db.GetNotebooks(userID); err == nil {
 		for _, nb := range notebooks {
+			if err := s.api.Context().Err(); err != nil {
+				return nil, "", err
+			}
 			if nb != nil && !nb.IsTrash {
 				addCandidate(nb.NotebookID, nb.ServerNotebookID)
 			}
@@ -514,6 +538,9 @@ func (s *SyncService) processNoteAfterSync(localNote *models.Note, serverNote *m
 func (s *SyncService) updateTagCounts(tags []string) {
 	userID := s.db.GetCurrentUserID()
 	for _, tag := range tags {
+		if err := s.api.Context().Err(); err != nil {
+			return
+		}
 		if tag == "" {
 			continue
 		}
@@ -525,6 +552,9 @@ func (s *SyncService) updateTagCounts(tags []string) {
 }
 
 func (s *SyncService) sendTagChanges(userID string, syncInfo *models.SyncInfo) error {
+	if err := s.api.Context().Err(); err != nil {
+		return err
+	}
 	tags, err := s.db.GetDirtyTags(userID)
 	if err != nil {
 		return err
@@ -532,6 +562,9 @@ func (s *SyncService) sendTagChanges(userID string, syncInfo *models.SyncInfo) e
 
 	var firstErr error
 	for _, tag := range tags {
+		if err := s.api.Context().Err(); err != nil {
+			return err
+		}
 		if !tag.IsDirty {
 			continue
 		}

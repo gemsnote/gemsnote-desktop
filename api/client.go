@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -13,6 +14,7 @@ import (
 )
 
 type Client struct {
+	ctx           context.Context
 	client        *resty.Client
 	uploadClient  *resty.Client
 	contentClient *resty.Client
@@ -43,6 +45,24 @@ func newRestyClient(timeout time.Duration) *resty.Client {
 	transport.TLSHandshakeTimeout = tlsHandshakeTimeout
 	transport.MaxIdleConnsPerHost = 4
 	return resty.New().SetTransport(transport).SetTimeout(timeout)
+}
+
+// SetContext binds requests and retry waits to one serialized operation.
+// Callers must not change the context while an operation is running.
+func (c *Client) SetContext(ctx context.Context) { c.ctx = ctx }
+func (c *Client) Context() context.Context {
+	if c.ctx != nil {
+		return c.ctx
+	}
+	return context.Background()
+}
+func (c *Client) waitRetry(delay time.Duration) {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-c.Context().Done():
+	}
 }
 
 func (c *Client) SetToken(token string) {
@@ -90,6 +110,9 @@ func (c *Client) redactError(err error) error {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, context.Canceled) {
+		return context.Canceled
+	}
 	message := err.Error()
 	if c.token != "" {
 		message = strings.ReplaceAll(message, c.token, "[redacted]")
@@ -102,7 +125,7 @@ func (c *Client) get(path string, params map[string]string) (*resty.Response, er
 }
 
 func (c *Client) getWithClient(client *resty.Client, path string, params map[string]string) (*resty.Response, error) {
-	return c.getWithClientContext(context.Background(), client, path, params)
+	return c.getWithClientContext(c.Context(), client, path, params)
 }
 
 func (c *Client) getWithClientContext(ctx context.Context, client *resty.Client, path string, params map[string]string) (*resty.Response, error) {
@@ -147,7 +170,7 @@ func (c *Client) postWithClient(client *resty.Client, path string, data interfac
 		allParams[k] = v
 	}
 
-	req := c.authorize(client.R()).SetQueryParams(allParams)
+	req := c.authorize(client.R().SetContext(c.Context())).SetQueryParams(allParams)
 	if data != nil {
 		form := flattenFormData(data)
 		if path == "note/addNote" || path == "note/updateNote" {
@@ -238,7 +261,7 @@ func (c *Client) postFiles(path string, formData map[string]string, files map[st
 		allParams[k] = v
 	}
 
-	req := c.authorize(c.client.R()).SetQueryParams(allParams)
+	req := c.authorize(c.client.R().SetContext(c.Context())).SetQueryParams(allParams)
 
 	for fieldName, filePath := range files {
 		req = req.SetFile(fieldName, filePath)

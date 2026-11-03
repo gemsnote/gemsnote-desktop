@@ -42,6 +42,9 @@ func NewSyncService(database *db.Database, client *api.Client) *SyncService {
 	}
 }
 
+// SetContext is called under App's sync lock, before starting a round.
+func (s *SyncService) SetContext(ctx context.Context) { s.api.SetContext(ctx) }
+
 func (s *SyncService) SetProgressCallback(cb func(models.SyncProgress)) {
 	s.progressCb = cb
 }
@@ -170,6 +173,9 @@ func (s *SyncService) fullSync(withContentSnapshot bool) (*models.SyncInfo, erro
 		logrus.Infof("Full sync merged notes available locally: %d", merged)
 	}
 
+	if err := s.api.Context().Err(); err != nil {
+		return nil, err
+	}
 	if err := s.db.UpdateUserSyncState(user.ID, map[string]int64{
 		"last_sync_usn":  serverState.LastSyncUsn,
 		"last_sync_time": time.Now().Unix(),
@@ -178,7 +184,7 @@ func (s *SyncService) fullSync(withContentSnapshot bool) (*models.SyncInfo, erro
 	}
 
 	s.emitProgress("done", 100, 100)
-	if withContentSnapshot {
+	if withContentSnapshot || s.BackgroundProfileRefresh != nil {
 		s.startSnapshotDownloads(user)
 	}
 	logrus.Info("Full sync completed")
@@ -243,6 +249,9 @@ func (s *SyncService) IncrSync() (*models.SyncInfo, error) {
 			return nil, err
 		}
 		if err := s.syncTags(-1, syncInfo); err != nil {
+			return nil, err
+		}
+		if err := s.api.Context().Err(); err != nil {
 			return nil, err
 		}
 		if err := s.db.UpdateUserSyncState(user.ID, map[string]int64{"last_sync_usn": serverState.LastSyncUsn}); err != nil {

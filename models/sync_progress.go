@@ -3,6 +3,7 @@ package models
 // Percent is overall progress. Current/Total are item counts in the current
 // phase; Total=0 means the server has not provided an exact item count yet.
 type SyncProgress struct {
+	RunID   uint64
 	Running bool
 	Mode    string
 	Stage   string
