@@ -492,3 +492,43 @@ func TestLoginStopsOldSessionBeforeChangingServer(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestGroupMemberIdentityIsForwardedUnchanged(t *testing.T) {
+	for _, identity := range []string{"alice", "member@example.test", "abcdef0123456789abcdef01"} {
+		t.Run(identity, func(t *testing.T) {
+			var forwarded bool
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api2/auth/login":
+					w.Write([]byte(api2LoginResponse("user1")))
+				case "/api2/system/version":
+					w.Write([]byte(`{"server":"gemsnote","version":"1.1.0"}`))
+				case "/api2/member/group/addUser":
+					if r.Method != http.MethodPost || r.Header.Get("Authorization") != "Bearer test-token" {
+						t.Error("missing POST/Bearer authentication")
+					}
+					if err := r.ParseForm(); err != nil {
+						t.Fatal(err)
+					}
+					if r.Form.Get("email") != identity || r.Form.Get("groupId") != "server-group" {
+						t.Errorf("unexpected group payload: %v", r.Form)
+					}
+					forwarded = true
+					w.Write([]byte(`{"Ok":true}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
+			e := newTestEnv(t)
+			e.db.SetConfig("host", server.URL)
+			e.db.SetConfig("proxy:email", "tester")
+			e.db.SetConfig("proxy:pwd", "secret")
+			e.handler.Proxy = NewServerProxy(e.db, e.handler.Files)
+			_, body := e.post(t, "/api2/member/group/addUser", url.Values{"groupId": {"server-group"}, "email": {identity}})
+			if !forwarded || string(body) != `{"Ok":true}` {
+				t.Fatalf("forwarded=%v response=%s", forwarded, body)
+			}
+		})
+	}
+}
