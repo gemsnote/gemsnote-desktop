@@ -62,19 +62,26 @@ func TestFreshSyncUsesPagedContentSnapshot(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api2/user/getSyncState":
-			w.Write([]byte(`{"Ok":true,"LastSyncUsn":2,"LastSyncTime":0}`))
+			w.Write([]byte(`{"Ok":true,"LastSyncUsn":22,"LastSyncTime":0}`))
 		case "/api2/notebook/getSyncNotebooks":
 			w.Write([]byte(`[{"NotebookId":"remote-book","UserId":"user1","Title":"Book","Usn":1}]`))
 		case "/api2/note/getSyncNotesWithContent":
 			contentCalls++
-			if got := r.URL.Query().Get("maxEntry"); got != "20" {
-				t.Errorf("snapshot maxEntry=%q, want 20", got)
+			if got := r.URL.Query().Get("maxEntry"); got != "10" {
+				t.Errorf("snapshot maxEntry=%q, want 10", got)
 			}
 			var notes []map[string]any
-			start, end := 0, 20
-			if r.URL.Query().Get("afterUsn") != "-1" {
-				start, end = 20, 21
+			if contentCalls > 3 {
+				t.Error("unexpected extra content page")
+				w.Write([]byte(`[]`))
+				return
 			}
+			wantCursor := []string{"-1", "11", "21"}[contentCalls-1]
+			if got := r.URL.Query().Get("afterUsn"); got != wantCursor {
+				t.Errorf("page %d cursor=%q, want %s", contentCalls, got, wantCursor)
+			}
+			start := (contentCalls - 1) * 10
+			end := min(start+10, 21)
 			for i := start; i < end; i++ {
 				id := fmt.Sprintf("remote-note-%d", i)
 				if i == 0 {
@@ -108,11 +115,17 @@ func TestFreshSyncUsesPagedContentSnapshot(t *testing.T) {
 	if _, err := syncer.FreshSync(); err != nil {
 		t.Fatal(err)
 	}
-	note, err := database.GetNoteByServerID("remote-note")
-	if err != nil || note == nil || note.Content != "snapshot body" || note.InitSync {
-		t.Fatalf("snapshot note not cached: note=%+v err=%v", note, err)
+	for i := 0; i < 21; i++ {
+		id := fmt.Sprintf("remote-note-%d", i)
+		if i == 0 {
+			id = "remote-note"
+		}
+		note, err := database.GetNoteByServerID(id)
+		if err != nil || note == nil || note.Content != "snapshot body" || note.InitSync {
+			t.Fatalf("snapshot note %s not cached: note=%+v err=%v", id, note, err)
+		}
 	}
-	if contentCalls != 2 || singleContentCalls != 0 {
+	if contentCalls != 3 || singleContentCalls != 0 {
 		t.Fatalf("snapshot calls=%d single content calls=%d", contentCalls, singleContentCalls)
 	}
 	completed := 0
