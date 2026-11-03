@@ -104,6 +104,10 @@ wails dev
 
 共享前端的文件选择按钮、确认/输入对话框和表单校验提示使用应用内语言。请复用 `FilePicker.vue` 和 `dialogs.ts`，不要直接使用原生 `alert/confirm/prompt`。系统文件选择窗口中的目录名称、系统按钮等由操作系统负责本地化；Wails v2 没有跨平台的运行时语言切换选项，应用语言不能覆盖这些系统界面。
 
+笔记列表复用服务端仓库 `frontend/` 的排序菜单，支持创建时间、修改时间和标题各自的升序/降序。创建时间使用 bridge 返回的 `CreatedTime`，与 `UpdatedTime` 分开；相同排序值按笔记 ID 稳定排序。此菜单更新后需重新构建共享前端（`bash build-frontend.sh`）或 desktop release 才能生效，不能只更新 Go 二进制。
+
+在服务端仓库运行 `npm --prefix frontend run test:note-sort`，可验证 Web/desktop 模式、中英文菜单、六种排序及带时区的创建时间；desktop 的 `go test ./webapi` 验证本地列表接口保留原始创建/修改时间。
+
 ## 测试
 
 ```bash
