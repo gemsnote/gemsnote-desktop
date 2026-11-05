@@ -13,10 +13,11 @@ type ServerVersion struct {
 	MinVersion string `json:"min_version"`
 }
 
-const (
-	ClientVersion      = "1.1.0"
-	RequiredAPIVersion = "1.1.0"
-)
+// Keep ClientVersion on one line because release tooling reads it without
+// compiling the package.
+const ClientVersion = "1.1.0"
+
+const RequiredAPIVersion = "1.1.0"
 
 func ServerVersionNotice(info *ServerVersion, err error) string {
 	if err != nil {
