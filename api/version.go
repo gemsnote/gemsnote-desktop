@@ -13,7 +13,10 @@ type ServerVersion struct {
 	MinVersion string `json:"min_version"`
 }
 
-const ClientVersion = "1.0.0"
+const (
+	ClientVersion      = "1.1.0"
+	RequiredAPIVersion = "1.1.0"
+)
 
 func ServerVersionNotice(info *ServerVersion, err error) string {
 	if err != nil {
@@ -29,7 +32,7 @@ func ServerVersionNotice(info *ServerVersion, err error) string {
 	if info.MinVersion != "" && CompareVersions(ClientVersion, info.MinVersion) < 0 {
 		return "clientUpgradeRequired"
 	}
-	if info.Version != "" && CompareVersions(ClientVersion, info.Version) > 0 {
+	if info.Version != "" && CompareVersions(RequiredAPIVersion, info.Version) > 0 {
 		return "serverUpgradeRequired"
 	}
 	return ""
