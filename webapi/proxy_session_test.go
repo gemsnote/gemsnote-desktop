@@ -21,6 +21,34 @@ func api2LoginResponse(userID string) string {
 	return fmt.Sprintf(`{"Ok":true,"Token":"test-token","User":{"UserId":%q,"Username":"tester","Email":"tester@example.test","Logo":""},"Server":{"Name":"gemsnote","Version":"1.0.0","MinVersion":""}}`, userID)
 }
 
+func TestSystemVersionIsProxiedWithoutRemoteSession(t *testing.T) {
+	var logins atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api2/system/version":
+			w.Header().Set("Content-Type", "application/json")
+			w.Write([]byte(`{"server":"gemsnote","version":"1.1.0","min_version":"1.1.0"}`))
+		case "/api2/auth/login":
+			logins.Add(1)
+			w.Write([]byte(api2LoginResponse("admin")))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	e := newTestEnv(t)
+	e.db.SetConfig("host", server.URL)
+	e.handler.Proxy = NewServerProxy(e.db, e.handler.Files)
+	status, body := e.get(t, "/api2/system/version")
+	if status != http.StatusOK || string(body) != `{"server":"gemsnote","version":"1.1.0","min_version":"1.1.0"}` {
+		t.Fatalf("system version response: status=%d body=%s", status, body)
+	}
+	if logins.Load() != 0 {
+		t.Fatalf("system version unexpectedly established a remote session: logins=%d", logins.Load())
+	}
+}
+
 func TestSharedNotebooksUsesAndRenewsBearerToken(t *testing.T) {
 	var logins atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

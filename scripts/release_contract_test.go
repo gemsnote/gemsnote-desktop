@@ -36,9 +36,10 @@ func TestPrepareFrontendOnCleanCheckout(t *testing.T) {
 				}
 			}
 			write("desktop-app/build-frontend.sh", read(t, "../build-frontend.sh"), 0755)
+			write("desktop-app/api/VERSION", "1.1.0\n", 0644)
 			write("frontend/dist/index.html", "fixture frontend", 0644)
 			write("public/tinymce/tinymce.min.js", "fixture editor", 0644)
-			stub := "#!/bin/sh\nexit 0\n"
+			stub := "#!/bin/sh\n[ \"$1\" != \"run\" ] || [ \"$VITE_GEMSNOTE_DESKTOP_VERSION\" = \"1.1.0\" ]\n"
 			if fail {
 				stub = "#!/bin/sh\nexit 13\n"
 			}
@@ -149,6 +150,15 @@ func TestReleaseBuildsSynchronizeWailsProductVersion(t *testing.T) {
 	} {
 		if !strings.Contains(read(t, tc.path), tc.want) {
 			t.Errorf("%s does not derive Wails package metadata from api/VERSION", tc.path)
+		}
+	}
+}
+
+func TestSharedFrontendReceivesCanonicalDesktopVersion(t *testing.T) {
+	s := read(t, "../build-frontend.sh")
+	for _, required := range []string{"api/VERSION", "VITE_GEMSNOTE_DESKTOP_VERSION"} {
+		if !strings.Contains(s, required) {
+			t.Errorf("build-frontend.sh does not inject canonical Desktop version: missing %s", required)
 		}
 	}
 }

@@ -548,7 +548,7 @@ func (p *ServerProxy) Forward(w http.ResponseWriter, r *http.Request, form url.V
 	return true
 }
 
-var guestPaths = []string{"/captcha/", "/api2/auth/register", "/api2/auth/password/request", "/api2/auth/password/reset", "/api2/web/verifyEmail"}
+var guestPaths = []string{"/captcha/", "/api2/system/version", "/api2/auth/register", "/api2/auth/password/request", "/api2/auth/password/reset", "/api2/web/verifyEmail"}
 
 func (p *ServerProxy) isGuestPath(path string) bool {
 	for _, prefix := range guestPaths {
@@ -568,7 +568,7 @@ func (h *Handler) routeProxied(w http.ResponseWriter, r *http.Request) bool {
 
 	proxied := strings.HasPrefix(path, "/api2/share/") || strings.HasPrefix(path, "/api2/member/") ||
 		strings.HasPrefix(path, "/api2/user/") || strings.HasPrefix(path, "/captcha/") ||
-		path == "/api2/groups" || path == "/api2/admin/data" || path == "/api2/avatar" ||
+		path == "/api2/system/version" || path == "/api2/groups" || path == "/api2/admin/data" || path == "/api2/avatar" ||
 		path == "/api2/web/shareMembers" || path == "/api2/web/groups" || path == "/api2/web/emailChange" ||
 		path == "/api2/web/verifyEmail" || path == "/api2/auth/register" || path == "/api2/auth/password/request" ||
 		path == "/api2/auth/password/reset" || path == "/api2/auth/login" || path == "/api2/file/uploadAvatar" ||
