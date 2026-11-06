@@ -7,6 +7,9 @@
   "frontend:dev:watcher": "echo 'skip'",
   "frontend:dev:serverUrl": "auto",
   "build:tags": "webkit2_41",
+  "info": {
+    "productVersion": "1.1.0"
+  },
   "author": {
     "name": "raptor",
     "email": "raptorz@qq.com"

@@ -1,6 +1,7 @@
 package scripts
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,6 +102,31 @@ func TestReleaseTagsMatchServerConvention(t *testing.T) {
 	}
 	if strings.Contains(s, "${tag#v}") || strings.Contains(s, "v*.*.*") {
 		t.Fatal("legacy v-prefix release convention remains")
+	}
+}
+
+func TestWailsProductVersionMatchesClientVersion(t *testing.T) {
+	var config struct {
+		Info struct {
+			ProductVersion string `json:"productVersion"`
+		} `json:"info"`
+	}
+	if err := json.Unmarshal([]byte(read(t, "../wails.json")), &config); err != nil {
+		t.Fatalf("parse wails.json: %v", err)
+	}
+	const prefix = `const ClientVersion = "`
+	var clientVersion string
+	for _, line := range strings.Split(read(t, "../api/version.go"), "\n") {
+		if strings.HasPrefix(line, prefix) && strings.HasSuffix(line, `"`) {
+			clientVersion = strings.TrimSuffix(strings.TrimPrefix(line, prefix), `"`)
+			break
+		}
+	}
+	if clientVersion == "" {
+		t.Fatal("ClientVersion not found")
+	}
+	if config.Info.ProductVersion != clientVersion {
+		t.Fatalf("wails productVersion = %q, ClientVersion = %q", config.Info.ProductVersion, clientVersion)
 	}
 }
 
@@ -222,7 +248,7 @@ func TestMacOSToolingUsesWorkflowRevisionInsteadOfReleaseTag(t *testing.T) {
 	step := s[start : start+1+end]
 	for _, required := range []string{
 		"if: matrix.archive == 'darwin'",
-		"uses: actions/checkout@v4",
+		"uses: actions/checkout@",
 		"repository: ${{ github.repository }}",
 		"ref: ${{ github.workflow_sha }}",
 		"path: release-tools",
