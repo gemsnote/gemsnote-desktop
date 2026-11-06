@@ -16,8 +16,8 @@ Gemsnote Desktop 是离线优先的客户端。首次使用需要连接一个 Ge
 Linux AppImage 示例：
 
 ```bash
-chmod +x gemsnote-1.0.0-linux-amd64.AppImage
-./gemsnote-1.0.0-linux-amd64.AppImage
+chmod +x gemsnote-1.1.0-linux-amd64.AppImage
+./gemsnote-1.1.0-linux-amd64.AppImage
 ```
 
 Linux ZIP 的菜单安装见下方步骤。Linux 中文桌面会显示“珠玑笔记”，其它语言显示 “Gemsnote”。macOS 首次打开若出现安全提示，请在“系统设置 → 隐私与安全性”中允许；应用名称会随系统语言显示为“珠玑笔记”或 “Gemsnote”。Windows 安装程序会根据安装时的系统语言创建中文或英文的开始菜单、桌面快捷方式和卸载项。

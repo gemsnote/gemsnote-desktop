@@ -7,6 +7,7 @@ import (
 	"embed"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -161,6 +162,14 @@ func main() {
 		AssetServer: &assetserver.Options{
 			Assets:  assets,
 			Handler: apiHandler,
+			Middleware: func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					// A Wails WebView may otherwise reuse the previous release's
+					// index.html and hashed JavaScript from its persistent cache.
+					w.Header().Set("Cache-Control", "no-store")
+					next.ServeHTTP(w, r)
+				})
+			},
 		},
 		BackgroundColour: &options.RGBA{R: 255, G: 255, B: 255, A: 1},
 		OnStartup:        app.startup,

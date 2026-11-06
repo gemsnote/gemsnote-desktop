@@ -129,19 +129,27 @@ func TestWailsProductVersionMatchesClientVersion(t *testing.T) {
 	if err := json.Unmarshal([]byte(read(t, "../wails.json")), &config); err != nil {
 		t.Fatalf("parse wails.json: %v", err)
 	}
-	const prefix = `const ClientVersion = "`
-	var clientVersion string
-	for _, line := range strings.Split(read(t, "../api/version.go"), "\n") {
-		if strings.HasPrefix(line, prefix) && strings.HasSuffix(line, `"`) {
-			clientVersion = strings.TrimSuffix(strings.TrimPrefix(line, prefix), `"`)
-			break
-		}
-	}
+	clientVersion := strings.TrimSpace(read(t, "../api/VERSION"))
 	if clientVersion == "" {
-		t.Fatal("ClientVersion not found")
+		t.Fatal("api/VERSION is empty")
 	}
 	if config.Info.ProductVersion != clientVersion {
 		t.Fatalf("wails productVersion = %q, ClientVersion = %q", config.Info.ProductVersion, clientVersion)
+	}
+}
+
+func TestReleaseBuildsSynchronizeWailsProductVersion(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want string
+	}{
+		{"../scripts/build-release.sh", `sync-wails-version.sh`},
+		{"../scripts/build-release.ps1", `productVersion`},
+		{"../.github/workflows/release.yml", `sync-wails-version.sh`},
+	} {
+		if !strings.Contains(read(t, tc.path), tc.want) {
+			t.Errorf("%s does not derive Wails package metadata from api/VERSION", tc.path)
+		}
 	}
 }
 

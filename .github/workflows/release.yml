@@ -76,9 +76,9 @@ jobs:
         env:
           TAG_VERSION: ${{ steps.release.outputs.version }}
         run: |
-          client_version=$(sed -n 's/^const ClientVersion = "\([^"]*\)"/\1/p' api/version.go)
+          client_version=$(tr -d '[:space:]' < api/VERSION)
           if [[ -z "${client_version}" || "${client_version}" != "${TAG_VERSION}" ]]; then
-            echo "Tag version ${TAG_VERSION} does not match api.ClientVersion ${client_version:-<missing>}" >&2
+            echo "Tag version ${TAG_VERSION} does not match api/VERSION ${client_version:-<missing>}" >&2
             exit 1
           fi
 
@@ -110,7 +110,9 @@ jobs:
       # Use the same frontend preparation hook as the Wails release build.
       - name: Prepare desktop embedded frontend
         working-directory: gemsnote/desktop-app
-        run: bash build-frontend.sh
+        run: |
+          bash scripts/sync-wails-version.sh
+          bash build-frontend.sh
 
       - name: Test desktop application
         working-directory: gemsnote/desktop-app
@@ -248,7 +250,9 @@ jobs:
       - name: Build desktop application
         shell: bash
         working-directory: gemsnote/desktop-app
-        run: wails build -clean -platform "${{ matrix.platform }}" $([[ "${{ matrix.archive }}" == "nsis" ]] && echo --nsis || true)
+        run: |
+          bash scripts/sync-wails-version.sh
+          wails build -clean -platform "${{ matrix.platform }}" $([[ "${{ matrix.archive }}" == "nsis" ]] && echo --nsis || true)
 
       - name: Package Linux application
         if: matrix.archive == 'linux'

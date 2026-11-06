@@ -11,7 +11,7 @@ gemsnote/
 └── desktop-app/
 ```
 
-版本号集中定义在 `api/version.go` 的 `ClientVersion`。Bash 和 PowerShell 脚本直接读取此定义，不再接受版本参数；版本缺失、重复或不符合 `MAJOR.MINOR.PATCH` 时立即失败。
+Desktop 版本号集中定义在 `api/VERSION`，所需 API2 版本独立定义在 `api/API_VERSION`。Bash 和 PowerShell 脚本直接读取前者，不再接受版本参数；版本缺失或不符合 `MAJOR.MINOR.PATCH` 时立即失败。运行时关于框、API 客户端标识和打包文件名均读取同一份 Desktop 版本。
 
 ## 支持的平台
 
@@ -159,7 +159,7 @@ Linux AppImage 构建遇到 runtime 下载失败时，按上文的 `APPIMAGE_RUN
 
 两个脚本执行以下主要检查和构建步骤：
 
-1. 校验版本格式以及 `api.ClientVersion`；
+1. 校验版本格式以及 `api/VERSION`；
 2. 校验 Wails v2.12.0、Go、Node/npm 和共享前端目录；
 3. 执行前端 `npm ci`、测试，再通过 `build-frontend.sh` 构建并准备嵌入资源；
 4. 执行 Desktop 全量 Go 测试；
@@ -196,14 +196,14 @@ Windows 已生成 NSIS 安装包，正式分发可进一步增加 Authenticode �
 
 ## GitHub 自动发布
 
-Desktop 与服务端均使用不带 `v` 的 `MAJOR.MINOR.PATCH` 标签，例如 `1.0.0`。
+Desktop 与服务端均使用不带 `v` 的 `MAJOR.MINOR.PATCH` 标签，例如 `1.1.0`。
 发布工作流会按同名 tag 分别检出服务端共享前端与 Desktop 源码，因此推送 Desktop
 标签前，确认服务端仓库已有该标签，且两者是匹配的版本。Desktop 标签必须与
-`api/version.go` 的 `ClientVersion` 一致；工作流保留此校验。
+`api/VERSION` 一致；工作流保留此校验。
 
 ```bash
-git tag -a 1.0.0 -m "Gemsnote Desktop 1.0.0"
-git push origin 1.0.0
+git tag -a 1.1.0 -m "Gemsnote Desktop 1.1.0"
+git push origin 1.1.0
 ```
 
 也可在 Actions 中手动指定已有的无 `v` 标签发布。新标签应指向包含新版工作流的提交；

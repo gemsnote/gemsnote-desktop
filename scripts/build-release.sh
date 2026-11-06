@@ -6,7 +6,7 @@ usage() {
 Usage: $0 [linux|darwin] [amd64|arm64] [absolute-output-dir]
 
 Builds a release for the current host platform and architecture by default.
-Version is read from api/version.go (ClientVersion); no version argument is accepted.
+Version is read from api/VERSION; no version argument is accepted.
 The optional output directory must be an absolute path.
 
 Environment (macOS):
@@ -33,10 +33,10 @@ fi
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 desktop_dir="$(cd "$script_dir/.." && pwd)"
 source_root="$(cd "$desktop_dir/.." && pwd)"
-version_file="$desktop_dir/api/version.go"
+version_file="$desktop_dir/api/VERSION"
 [[ -f "$version_file" ]] || { echo "Version file not found: $version_file" >&2; exit 1; }
-version="$(sed -n 's/^const ClientVersion = "\([^"]*\)"/\1/p' "$version_file")"
-[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid or missing ClientVersion in $version_file (expected MAJOR.MINOR.PATCH)" >&2; exit 1; }
+version="$(tr -d '[:space:]' < "$version_file")"
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid version in $version_file (expected MAJOR.MINOR.PATCH)" >&2; exit 1; }
 
 case "$(uname -s)" in
   Linux) host_platform="linux" ;;
@@ -120,6 +120,7 @@ grep -Eq '(^|[^0-9])v?2\.12\.0([^0-9]|$)' <<<"$wails_version" || {
 
 mkdir -p "$output_dir"
 
+bash "$script_dir/sync-wails-version.sh"
 npm ci --prefix "$source_root/frontend"
 npm test --prefix "$source_root/frontend" -- --run
 bash "$desktop_dir/build-frontend.sh"

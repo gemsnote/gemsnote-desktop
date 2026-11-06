@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-Build a native Windows release using ClientVersion from api/version.go.
+Build a native Windows release using the version from api/VERSION.
 .EXAMPLE
 ./scripts/build-release.ps1 -OutputDir C:\release
 #>
@@ -18,15 +18,20 @@ param(
 $ErrorActionPreference = "Stop"
 $DesktopDir = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $SourceRoot = (Resolve-Path (Join-Path $DesktopDir "..")).Path
-$VersionFile = Join-Path $DesktopDir "api\version.go"
-$VersionMatches = @(Select-String -Path $VersionFile -Pattern '^const ClientVersion = "([^"]*)"$')
-if ($VersionMatches.Count -ne 1) {
-    throw "Expected exactly one ClientVersion in $VersionFile"
-}
-$Version = $VersionMatches[0].Matches[0].Groups[1].Value
+$VersionFile = Join-Path $DesktopDir "api\VERSION"
+$Version = (Get-Content -Raw $VersionFile).Trim()
 if ($Version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
-    throw "Invalid ClientVersion in $VersionFile (expected MAJOR.MINOR.PATCH)"
+    throw "Invalid version in $VersionFile (expected MAJOR.MINOR.PATCH)"
 }
+$WailsConfigPath = Join-Path $DesktopDir "wails.json"
+$WailsConfig = Get-Content -Raw $WailsConfigPath
+$ProductVersionPattern = '"productVersion"\s*:\s*"[^"]*"'
+$ProductVersionMatches = [regex]::Matches($WailsConfig, $ProductVersionPattern)
+if ($ProductVersionMatches.Count -ne 1) {
+    throw "Expected exactly one info.productVersion in $WailsConfigPath"
+}
+$WailsConfig = [regex]::Replace($WailsConfig, $ProductVersionPattern, '"productVersion": "' + $Version + '"')
+[System.IO.File]::WriteAllText($WailsConfigPath, $WailsConfig, [System.Text.UTF8Encoding]::new($false))
 if (-not $OutputDir) {
     $OutputDir = Join-Path $DesktopDir "release"
 }

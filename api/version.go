@@ -1,9 +1,11 @@
 package api
 
 import (
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -13,11 +15,28 @@ type ServerVersion struct {
 	MinVersion string `json:"min_version"`
 }
 
-// Keep ClientVersion on one line because release tooling reads it without
-// compiling the package.
-const ClientVersion = "1.1.0"
+//go:embed VERSION
+var clientVersionSource string
 
-const RequiredAPIVersion = "1.1.0"
+//go:embed API_VERSION
+var requiredAPIVersionSource string
+
+var semanticVersion = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+
+// ClientVersion is embedded from VERSION, the Desktop release-version source.
+var ClientVersion = mustVersion("VERSION", clientVersionSource)
+
+// RequiredAPIVersion is embedded separately because the application and API2
+// protocol can evolve independently.
+var RequiredAPIVersion = mustVersion("API_VERSION", requiredAPIVersionSource)
+
+func mustVersion(name, source string) string {
+	value := strings.TrimSpace(source)
+	if !semanticVersion.MatchString(value) {
+		panic(fmt.Sprintf("invalid %s %q: expected MAJOR.MINOR.PATCH", name, value))
+	}
+	return value
+}
 
 func ServerVersionNotice(info *ServerVersion, err error) string {
 	if err != nil {
