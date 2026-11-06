@@ -105,6 +105,21 @@ func TestReleaseTagsMatchServerConvention(t *testing.T) {
 	}
 }
 
+func TestManualReleaseCanPinSharedFrontendRevision(t *testing.T) {
+	s := read(t, "../.github/workflows/release.yml")
+	for _, required := range []string{
+		"frontend_ref:",
+		"DISPATCH_FRONTEND_REF: ${{ inputs.frontend_ref }}",
+		"frontend_ref=${DISPATCH_FRONTEND_REF:-${tag}}",
+		"ref: ${{ steps.release.outputs.frontend_ref }}",
+		"ref: ${{ needs.validate.outputs.frontend_ref }}",
+	} {
+		if !strings.Contains(s, required) {
+			t.Errorf("missing manual frontend revision contract: %s", required)
+		}
+	}
+}
+
 func TestWailsProductVersionMatchesClientVersion(t *testing.T) {
 	var config struct {
 		Info struct {

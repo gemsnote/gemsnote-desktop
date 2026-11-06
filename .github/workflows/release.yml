@@ -10,6 +10,10 @@ on:
         description: Existing tag to build and release (for example 1.0.0, without v)
         required: true
         type: string
+      frontend_ref:
+        description: Optional Gemsnote server ref containing the shared frontend (defaults to the release tag)
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -27,6 +31,7 @@ jobs:
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
+      frontend_ref: ${{ steps.release.outputs.frontend_ref }}
 
     steps:
       - name: Resolve release tag
@@ -34,6 +39,7 @@ jobs:
         shell: bash
         env:
           DISPATCH_TAG: ${{ inputs.release_tag }}
+          DISPATCH_FRONTEND_REF: ${{ inputs.frontend_ref }}
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             tag="${DISPATCH_TAG}"
@@ -46,6 +52,7 @@ jobs:
           fi
           echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
           echo "version=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "frontend_ref=${DISPATCH_FRONTEND_REF:-${tag}}" >> "${GITHUB_OUTPUT}"
 
       - name: Check out Gemsnote frontend
         uses: actions/checkout@v7
@@ -53,7 +60,7 @@ jobs:
           repository: ${{ env.GEMSNOTE_REPOSITORY }}
           token: ${{ secrets.GEMSNOTE_REPOSITORY_TOKEN || github.token }}
           path: gemsnote
-          ref: ${{ steps.release.outputs.tag }}
+          ref: ${{ steps.release.outputs.frontend_ref }}
           fetch-depth: 1
 
       - name: Check out desktop tag
@@ -148,7 +155,7 @@ jobs:
           repository: ${{ env.GEMSNOTE_REPOSITORY }}
           token: ${{ secrets.GEMSNOTE_REPOSITORY_TOKEN || github.token }}
           path: gemsnote
-          ref: ${{ needs.validate.outputs.tag }}
+          ref: ${{ needs.validate.outputs.frontend_ref }}
           fetch-depth: 1
 
       - name: Check out desktop tag
