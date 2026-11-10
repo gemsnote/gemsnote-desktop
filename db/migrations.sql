@@ -5,6 +5,7 @@ PRAGMA foreign_keys=ON;
 
 CREATE TABLE IF NOT EXISTS users (
     _id TEXT PRIMARY KEY,
+    remote_user_id TEXT DEFAULT '',
     username TEXT NOT NULL,
     email TEXT,
     pwd TEXT,

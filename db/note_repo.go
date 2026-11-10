@@ -81,15 +81,20 @@ func (d *Database) GetNote(noteID string) (*models.Note, error) {
 }
 
 func (d *Database) GetNoteByServerID(serverNoteID string) (*models.Note, error) {
-	row := d.db.QueryRow(`
+	query := `
 		SELECT _id, note_id, server_note_id, notebook_id, user_id,
 			title, content, desc, abstract, img_src, tags,
 			is_markdown, is_trash, is_blog, is_star, usn,
 			is_dirty, content_is_dirty, local_is_new, local_is_delete, init_sync,
 			conflict_note_id, conflict_time, conflict_fixed, err,
 			created_time, updated_time, local_edited_time
-		FROM notes WHERE server_note_id = ?
-	`, serverNoteID)
+		FROM notes WHERE server_note_id = ?`
+	args := []any{serverNoteID}
+	if userID := d.GetCurrentUserID(); userID != "" {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	row := d.db.QueryRow(query, args...)
 
 	return d.scanNote(row)
 }
@@ -100,7 +105,12 @@ func (d *Database) SetServerNoteID(noteID, serverNoteID string) error {
 }
 
 func (d *Database) GetLocalNoteID(serverNoteID string) (string, error) {
-	row := d.db.QueryRow(`SELECT note_id FROM notes WHERE server_note_id = ?`, serverNoteID)
+	query, args := `SELECT note_id FROM notes WHERE server_note_id = ?`, []any{serverNoteID}
+	if userID := d.GetCurrentUserID(); userID != "" {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	row := d.db.QueryRow(query, args...)
 	var noteID string
 	err := row.Scan(&noteID)
 	if err == sql.ErrNoRows {
@@ -411,14 +421,17 @@ func (d *Database) UpdateNoteForce(note *models.Note, needReloadContent bool) er
 }
 
 func (d *Database) AddNoteForce(note *models.Note) (*models.Note, error) {
-	if note.ID == "" {
-		note.ID = utils.ObjectId()
-	}
+	note.ID = utils.ObjectId()
 	if note.NoteID == "" {
 		note.NoteID = note.ID
 	}
 	if note.ServerNoteID == "" && note.NoteID != "" {
 		note.ServerNoteID = note.NoteID
+	}
+	if existing, err := d.GetNote(note.NoteID); err != nil {
+		return nil, err
+	} else if existing != nil && existing.UserID != note.UserID {
+		note.NoteID = utils.ObjectId()
 	}
 
 	localNotebookID, _ := d.GetNotebookIDByServerID(note.NotebookID)
@@ -449,7 +462,12 @@ func (d *Database) DeleteNote(noteID string) error {
 }
 
 func (d *Database) DeleteNoteForce(noteID string) error {
-	_, err := d.db.Exec(`DELETE FROM notes WHERE server_note_id = ?`, noteID)
+	query, args := `DELETE FROM notes WHERE server_note_id = ?`, []any{noteID}
+	if userID := d.GetCurrentUserID(); userID != "" {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	_, err := d.db.Exec(query, args...)
 	return err
 }
 

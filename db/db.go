@@ -87,7 +87,7 @@ func (d *Database) Close() error {
 	return d.db.Close()
 }
 
-const dbSchemaVersion = 4
+const dbSchemaVersion = 5
 
 func (d *Database) migrate() error {
 	migrationSQL, err := migrationsFS.ReadFile("migrations.sql")
@@ -108,6 +108,19 @@ func (d *Database) migrate() error {
 	}
 
 	steps := map[int]func(tx *sql.Tx) error{
+		5: func(tx *sql.Tx) error {
+			if err := d.ensureColumn(tx, "users", "remote_user_id", "TEXT DEFAULT ''"); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE users SET remote_user_id = _id WHERE is_local = 0 AND COALESCE(remote_user_id, '') = ''`); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(`UPDATE users SET remote_user_id = '' WHERE remote_user_id IS NULL`); err != nil {
+				return err
+			}
+			_, err := tx.Exec(`CREATE INDEX IF NOT EXISTS idx_users_remote_account ON users(remote_user_id, host)`)
+			return err
+		},
 		4: func(tx *sql.Tx) error {
 			if err := d.ensureColumn(tx, "note_histories", "is_markdown", "INTEGER"); err != nil {
 				return err
@@ -208,6 +221,35 @@ func (d *Database) GetDBPath() string {
 	return d.dbPath
 }
 
+// ResolveRemoteAccount gives one remote server account a stable local key.
+// Legacy rows keep using the remote ID when it is unambiguous. If another
+// server already uses that ID, a host-scoped key prevents either account from
+// seeing or overwriting the other's cache.
+func (d *Database) ResolveRemoteAccount(host, remoteUserID string) (string, *models.User, error) {
+	host = NormalizeServerURL(host)
+	users, err := d.GetAllUsers()
+	if err != nil {
+		return "", nil, err
+	}
+	for _, user := range users {
+		if !user.IsLocal && user.ServerUserID() == remoteUserID && NormalizeServerURL(user.Host) == host {
+			return user.ID, user, nil
+		}
+	}
+	localID := remoteUserID
+	if occupied, err := d.GetUser(localID); err != nil {
+		return "", nil, err
+	} else if occupied != nil {
+		localID = SharedAccountID(host, remoteUserID)
+		if scoped, err := d.GetUser(localID); err != nil {
+			return "", nil, err
+		} else if scoped != nil {
+			return "", nil, fmt.Errorf("local account identity collision")
+		}
+	}
+	return localID, nil, nil
+}
+
 func (d *Database) Begin() (*sql.Tx, error) {
 	return d.db.Begin()
 }
@@ -217,12 +259,12 @@ func (d *Database) Begin() (*sql.Tx, error) {
 func (d *Database) InsertUser(user *models.User) error {
 	_, err := d.db.Exec(`
 		INSERT OR REPLACE INTO users (
-			_id, username, email, pwd, token, host,
+			_id, remote_user_id, username, email, pwd, token, host,
 			last_sync_usn, last_sync_time, notebook_usn, note_usn, tag_usn,
 			is_active, is_local, has_db, state, created_time, last_login_time
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		user.ID, user.Username, user.Email, user.Pwd, user.Token, user.Host,
+		user.ID, user.RemoteUserID, user.Username, user.Email, user.Pwd, user.Token, user.Host,
 		user.LastSyncUsn, utils.TimeToUnix(user.LastSyncTime), user.NotebookUsn, user.NoteUsn, user.TagUsn,
 		user.IsActive, user.IsLocal, user.HasDB, user.State, utils.TimeToUnix(user.CreatedTime), utils.TimeToUnix(user.LastLoginTime),
 	)
@@ -231,7 +273,7 @@ func (d *Database) InsertUser(user *models.User) error {
 
 func (d *Database) GetActiveUser() (*models.User, error) {
 	row := d.db.QueryRow(`
-		SELECT _id, username, email, pwd, token, host,
+		SELECT _id, remote_user_id, username, email, pwd, token, host,
 			last_sync_usn, last_sync_time, notebook_usn, note_usn, tag_usn,
 			is_active, is_local, has_db, state, created_time, last_login_time
 		FROM users WHERE is_active = 1 LIMIT 1
@@ -241,7 +283,7 @@ func (d *Database) GetActiveUser() (*models.User, error) {
 	var lastSyncTime, createdTime, lastLoginTime sql.NullInt64
 
 	err := row.Scan(
-		&user.ID, &user.Username, &user.Email, &user.Pwd, &user.Token, &user.Host,
+		&user.ID, &user.RemoteUserID, &user.Username, &user.Email, &user.Pwd, &user.Token, &user.Host,
 		&user.LastSyncUsn, &lastSyncTime, &user.NotebookUsn, &user.NoteUsn, &user.TagUsn,
 		&user.IsActive, &user.IsLocal, &user.HasDB, &user.State, &createdTime, &lastLoginTime,
 	)
@@ -341,6 +383,12 @@ func (d *Database) HasPendingChanges(userID string) (bool, error) {
 // account. Even a partial download needs confirmation before being erased.
 // A user/session row by itself is not cached content.
 func (d *Database) HasAccountCache(userID string) (bool, error) {
+	accountID := ""
+	if user, err := d.GetUser(userID); err != nil {
+		return false, err
+	} else if user != nil && user.Host != "" {
+		accountID = SharedAccountID(user.Host, user.ID)
+	}
 	var cached bool
 	err := d.db.QueryRow(`
 		SELECT EXISTS(
@@ -354,11 +402,11 @@ func (d *Database) HasAccountCache(userID string) (bool, error) {
 			UNION ALL
 			SELECT 1 FROM attachs WHERE user_id = ?
 			UNION ALL
-			SELECT 1 FROM shared_notes n JOIN shared_accounts a ON n.account_id = a.account_id WHERE a.remote_user_id = ?
+			SELECT 1 FROM shared_notes WHERE account_id = ?
 			UNION ALL
-			SELECT 1 FROM shared_notebooks n JOIN shared_accounts a ON n.account_id = a.account_id WHERE a.remote_user_id = ?
+			SELECT 1 FROM shared_notebooks WHERE account_id = ?
 		)
-	`, userID, userID, userID, userID, userID, userID, userID).Scan(&cached)
+	`, userID, userID, userID, userID, userID, accountID, accountID).Scan(&cached)
 	return cached, err
 }
 
@@ -378,7 +426,7 @@ func (d *Database) UpdateLastLoginTime(userID string) error {
 
 func (d *Database) GetUserByEmail(email string) (*models.User, error) {
 	row := d.db.QueryRow(`
-		SELECT _id, username, email, pwd, token, host,
+		SELECT _id, remote_user_id, username, email, pwd, token, host,
 			last_sync_usn, last_sync_time, notebook_usn, note_usn, tag_usn,
 			is_active, is_local, has_db, state, created_time, last_login_time
 		FROM users WHERE email = ?
@@ -388,7 +436,7 @@ func (d *Database) GetUserByEmail(email string) (*models.User, error) {
 	var lastSyncTime, createdTime, lastLoginTime sql.NullInt64
 
 	err := row.Scan(
-		&user.ID, &user.Username, &user.Email, &user.Pwd, &user.Token, &user.Host,
+		&user.ID, &user.RemoteUserID, &user.Username, &user.Email, &user.Pwd, &user.Token, &user.Host,
 		&user.LastSyncUsn, &lastSyncTime, &user.NotebookUsn, &user.NoteUsn, &user.TagUsn,
 		&user.IsActive, &user.IsLocal, &user.HasDB, &user.State, &createdTime, &lastLoginTime,
 	)
@@ -427,7 +475,7 @@ func (d *Database) UpdateUserPwd(userID, pwd string) error {
 
 func (d *Database) GetUserByUsername(username string) (*models.User, error) {
 	row := d.db.QueryRow(`
-		SELECT _id, username, email, pwd, token, host,
+		SELECT _id, remote_user_id, username, email, pwd, token, host,
 			last_sync_usn, last_sync_time, notebook_usn, note_usn, tag_usn,
 			is_active, is_local, has_db, state, created_time, last_login_time
 		FROM users WHERE username = ? AND is_local = 1
@@ -437,7 +485,7 @@ func (d *Database) GetUserByUsername(username string) (*models.User, error) {
 	var lastSyncTime, createdTime, lastLoginTime sql.NullInt64
 
 	err := row.Scan(
-		&user.ID, &user.Username, &user.Email, &user.Pwd, &user.Token, &user.Host,
+		&user.ID, &user.RemoteUserID, &user.Username, &user.Email, &user.Pwd, &user.Token, &user.Host,
 		&user.LastSyncUsn, &lastSyncTime, &user.NotebookUsn, &user.NoteUsn, &user.TagUsn,
 		&user.IsActive, &user.IsLocal, &user.HasDB, &user.State, &createdTime, &lastLoginTime,
 	)
@@ -486,10 +534,10 @@ func (d *Database) CountTags(userID string) (int, error) {
 
 func (d *Database) UpdateUser(user *models.User) error {
 	_, err := d.db.Exec(`
-		UPDATE users SET username = ?, email = ?, token = ?, host = ?,
+		UPDATE users SET remote_user_id = ?, username = ?, email = ?, token = ?, host = ?,
 			is_active = ?, is_local = ?, last_sync_usn = ?
 		WHERE _id = ?
-	`, user.Username, user.Email, user.Token, user.Host, user.IsActive, user.IsLocal, user.LastSyncUsn, user.ID)
+	`, user.RemoteUserID, user.Username, user.Email, user.Token, user.Host, user.IsActive, user.IsLocal, user.LastSyncUsn, user.ID)
 	return err
 }
 

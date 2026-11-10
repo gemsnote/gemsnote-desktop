@@ -56,7 +56,7 @@ func (p *ServerProxy) SetHost(host string) {
 	if host == "" {
 		return
 	}
-	p.DB.SetConfig("host", strings.TrimRight(host, "/"))
+	p.DB.SetConfig("host", db.NormalizeServerURL(host))
 	p.sessionOk = false
 	p.token = ""
 	p.remoteUser = nil
@@ -305,18 +305,19 @@ func (p *ServerProxy) fetchServerUser() *models.User {
 }
 
 func (p *ServerProxy) cacheAvatar(userID, logo string) bool {
-	logo = strings.TrimSpace(logo)
-	if logo == "" {
-		p.DB.SetConfig("logo:"+userID, "")
-		p.DB.SetConfig("logo_source:"+userID, "")
-		return true
-	}
 	active, _ := p.DB.GetActiveUser()
-	if active == nil || active.ID != userID {
+	if active == nil || active.ServerUserID() != userID {
 		return true // login has not yet adopted this account locally
 	}
-	if source, _ := p.DB.GetConfig("logo_source:" + userID); source == logo {
-		if cached, _ := p.DB.GetConfig("logo:" + userID); cached != "" {
+	localUserID := active.ID
+	logo = strings.TrimSpace(logo)
+	if logo == "" {
+		p.DB.SetConfig("logo:"+localUserID, "")
+		p.DB.SetConfig("logo_source:"+localUserID, "")
+		return true
+	}
+	if source, _ := p.DB.GetConfig("logo_source:" + localUserID); source == logo {
+		if cached, _ := p.DB.GetConfig("logo:" + localUserID); cached != "" {
 			if strings.HasPrefix(cached, "/api2/file/getImage?fileId=") {
 				fileID := strings.TrimPrefix(cached, "/api2/file/getImage?fileId=")
 				if path, err := p.Files.GetImage(fileID); err == nil && path != "" {
@@ -332,7 +333,7 @@ func (p *ServerProxy) cacheAvatar(userID, logo string) bool {
 	path := strings.TrimLeft(logo, "/")
 	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
 		// A remote URL is usable online, but only same-origin paths are cached.
-		p.DB.SetConfig("logo:"+userID, logo)
+		p.DB.SetConfig("logo:"+localUserID, logo)
 		return true
 	}
 	cleanPath := strings.TrimPrefix(filepath.Clean("/"+path), "/")
@@ -347,7 +348,7 @@ func (p *ServerProxy) cacheAvatar(userID, logo string) bool {
 	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(resp.Header.Get("Content-Type"), "image/") {
 		return false
 	}
-	dir := p.Files.GetUserImageDir(userID)
+	dir := p.Files.GetUserImageDir(localUserID)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return false
 	}
@@ -367,8 +368,8 @@ func (p *ServerProxy) cacheAvatar(userID, logo string) bool {
 		os.Remove(name)
 		return false
 	}
-	p.DB.SetConfig("logo:"+userID, "/api2/file/getImage?fileId="+fileID)
-	p.DB.SetConfig("logo_source:"+userID, logo)
+	p.DB.SetConfig("logo:"+localUserID, "/api2/file/getImage?fileId="+fileID)
+	p.DB.SetConfig("logo_source:"+localUserID, logo)
 	return true
 }
 

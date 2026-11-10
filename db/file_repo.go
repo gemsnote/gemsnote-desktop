@@ -379,7 +379,7 @@ func (d *Database) ClearTrash(userID string) error {
 
 func (d *Database) GetAllUsers() ([]*models.User, error) {
 	rows, err := d.db.Query(`
-		SELECT _id, username, email, pwd, token, host,
+		SELECT _id, remote_user_id, username, email, pwd, token, host,
 			last_sync_usn, last_sync_time, notebook_usn, note_usn, tag_usn,
 			is_active, is_local, has_db, state, created_time, last_login_time
 		FROM users ORDER BY last_login_time DESC
@@ -395,7 +395,7 @@ func (d *Database) GetAllUsers() ([]*models.User, error) {
 		var lastSyncTime, createdTime, lastLoginTime sql.NullInt64
 
 		if err := rows.Scan(
-			&user.ID, &user.Username, &user.Email, &user.Pwd, &user.Token, &user.Host,
+			&user.ID, &user.RemoteUserID, &user.Username, &user.Email, &user.Pwd, &user.Token, &user.Host,
 			&user.LastSyncUsn, &lastSyncTime, &user.NotebookUsn, &user.NoteUsn, &user.TagUsn,
 			&user.IsActive, &user.IsLocal, &user.HasDB, &user.State, &createdTime, &lastLoginTime,
 		); err != nil {
@@ -422,7 +422,7 @@ func (d *Database) GetAllUsers() ([]*models.User, error) {
 
 func (d *Database) GetUser(userID string) (*models.User, error) {
 	row := d.db.QueryRow(`
-		SELECT _id, username, email, pwd, token, host,
+		SELECT _id, remote_user_id, username, email, pwd, token, host,
 			last_sync_usn, last_sync_time, notebook_usn, note_usn, tag_usn,
 			is_active, is_local, has_db, state, created_time, last_login_time
 		FROM users WHERE _id = ?
@@ -432,7 +432,7 @@ func (d *Database) GetUser(userID string) (*models.User, error) {
 	var lastSyncTime, createdTime, lastLoginTime sql.NullInt64
 
 	err := row.Scan(
-		&user.ID, &user.Username, &user.Email, &user.Pwd, &user.Token, &user.Host,
+		&user.ID, &user.RemoteUserID, &user.Username, &user.Email, &user.Pwd, &user.Token, &user.Host,
 		&user.LastSyncUsn, &lastSyncTime, &user.NotebookUsn, &user.NoteUsn, &user.TagUsn,
 		&user.IsActive, &user.IsLocal, &user.HasDB, &user.State, &createdTime, &lastLoginTime,
 	)
@@ -461,7 +461,7 @@ func (d *Database) GetUser(userID string) (*models.User, error) {
 
 func (d *Database) GetUserByNameOrEmail(identifier string) (*models.User, error) {
 	row := d.db.QueryRow(`
-		SELECT _id, username, email, pwd, token, host,
+		SELECT _id, remote_user_id, username, email, pwd, token, host,
 			last_sync_usn, last_sync_time, notebook_usn, note_usn, tag_usn,
 			is_active, is_local, has_db, state, created_time, last_login_time
 		FROM users WHERE username = ? OR email = ?
@@ -471,7 +471,7 @@ func (d *Database) GetUserByNameOrEmail(identifier string) (*models.User, error)
 	var lastSyncTime, createdTime, lastLoginTime sql.NullInt64
 
 	err := row.Scan(
-		&user.ID, &user.Username, &user.Email, &user.Pwd, &user.Token, &user.Host,
+		&user.ID, &user.RemoteUserID, &user.Username, &user.Email, &user.Pwd, &user.Token, &user.Host,
 		&user.LastSyncUsn, &lastSyncTime, &user.NotebookUsn, &user.NoteUsn, &user.TagUsn,
 		&user.IsActive, &user.IsLocal, &user.HasDB, &user.State, &createdTime, &lastLoginTime,
 	)

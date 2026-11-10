@@ -88,6 +88,9 @@ func (s *SyncService) processNotebookSync(serverNb *models.Notebook, syncInfo *m
 	if serverNb == nil {
 		return nil
 	}
+	serverNbCopy := *serverNb
+	serverNbCopy.UserID = s.db.GetCurrentUserID()
+	serverNb = &serverNbCopy
 	// Keep parent references local while retaining ServerNotebookID for
 	// uploads. The server sends ParentNotebookId values in its own ID space.
 	if serverNb.ParentNotebookID != "" {
@@ -100,7 +103,9 @@ func (s *SyncService) processNotebookSync(serverNb *models.Notebook, syncInfo *m
 	if serverNb.IsDeleted {
 		localID, _ := s.db.GetNotebookIDByServerID(serverNb.NotebookID)
 		if localID != "" {
-			s.db.DeleteNotebookForce(localID)
+			if err := s.db.ApplyRemoteNotebookDelete(localID); err != nil {
+				return err
+			}
 			syncInfo.Notebook.Deletes = append(syncInfo.Notebook.Deletes, localID)
 		}
 		return nil
@@ -122,7 +127,7 @@ func (s *SyncService) processNotebookSync(serverNb *models.Notebook, syncInfo *m
 	// UpdateNotebookForce addresses rows by the local notebook ID. Preserve
 	// the remote ID only for lookup and translate the primary key before the
 	// local update.
-	serverNbCopy := *serverNb
+	serverNbCopy = *serverNb
 	serverNbCopy.NotebookID = localNb.NotebookID
 	serverNb = &serverNbCopy
 
@@ -240,6 +245,9 @@ func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.
 		return err
 	}
 	remoteNoteID := serverNote.NoteID
+	serverNoteCopy := *serverNote
+	serverNoteCopy.UserID = s.db.GetCurrentUserID()
+	serverNote = &serverNoteCopy
 	if serverNote.IsDeleted {
 		localID, _ := s.db.GetLocalNoteID(serverNote.NoteID)
 		if localID != "" {
@@ -319,7 +327,7 @@ func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.
 	// Keep the local primary key when updating an existing cached note. The
 	// server NoteId is only the mapping key; using it in UPDATE ... WHERE
 	// note_id would silently update zero rows and leave moves/content stale.
-	serverNoteCopy := *serverNote
+	serverNoteCopy = *serverNote
 	serverNoteCopy.NoteID = localNote.NoteID
 	serverNote = &serverNoteCopy
 	if !serverNote.IsStarPresent {

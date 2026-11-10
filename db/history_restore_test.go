@@ -98,7 +98,7 @@ func TestHistorySchemaUpgradeKeepsLegacyRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	var version int
-	if err = d.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != 4 {
+	if err = d.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil || version != dbSchemaVersion {
 		t.Fatalf("%d %v", version, err)
 	}
 	rows, err := d.db.Query(`SELECT is_markdown,attachments_json FROM note_histories`)

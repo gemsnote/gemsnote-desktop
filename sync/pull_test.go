@@ -57,6 +57,53 @@ func TestIncrementalSyncUploadsDirtyDataBeforePulling(t *testing.T) {
 	}
 }
 
+func TestIncrementalSyncResolvesNotebookUploadConflictWithServerMetadata(t *testing.T) {
+	updateCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api2/client/notebook/update":
+			updateCalls++
+			w.Write([]byte(`{"Ok":false,"Msg":"conflict"}`))
+		case "/api2/notebook/getSyncNotebooks":
+			w.Write([]byte(`[{"NotebookId":"remote-book","UserId":"user1","Title":"Server title","Seq":3,"Usn":8}]`))
+		case "/api2/user/getSyncState":
+			w.Write([]byte(`{"LastSyncUsn":8,"LastSyncTime":0}`))
+		case "/api2/note/getSyncNotes", "/api2/tag/getSyncTags":
+			w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	database, err := db.NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.InsertUser(&models.User{ID: "user1", Username: "tester", Host: server.URL, Token: "token", IsActive: true}); err != nil {
+		t.Fatal(err)
+	}
+	database.SetCurrentUser("user1")
+	if err := database.InsertNotebook(&models.Notebook{
+		ID: "book", NotebookID: "local-book", ServerNotebookID: "remote-book",
+		UserID: "user1", Title: "Local title", Seq: 1, Usn: 7, IsDirty: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := NewSyncService(database, api.NewClient()).IncrSync(); err != nil {
+		t.Fatal(err)
+	}
+	if updateCalls != 1 {
+		t.Fatalf("notebook update calls = %d, want 1", updateCalls)
+	}
+	nb, err := database.GetNotebook("local-book")
+	if err != nil || nb == nil || nb.IsDirty || nb.Title != "Server title" || nb.Seq != 3 || nb.Usn != 8 {
+		t.Fatalf("server notebook metadata did not win: notebook=%+v err=%v", nb, err)
+	}
+}
+
 func TestFreshSyncUsesPagedContentSnapshot(t *testing.T) {
 	contentCalls, singleContentCalls := 0, 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -346,6 +393,44 @@ func TestSameUSNRootNotebookClearsStaleParent(t *testing.T) {
 	nb, err := database.GetNotebook("local-root")
 	if err != nil || nb == nil || nb.ParentNotebookID != "" {
 		t.Fatalf("stale root parent retained: %+v %v", nb, err)
+	}
+}
+
+func TestRemoteNotebookDeleteClearsDirtyStateWhileNoteStillReferencesIt(t *testing.T) {
+	database, err := db.NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	if err := database.InsertUser(&models.User{ID: "user1", Username: "tester"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.InsertNotebook(&models.Notebook{
+		ID: "book", NotebookID: "local-book", ServerNotebookID: "remote-book",
+		UserID: "user1", Title: "Deleted", IsDirty: true, LocalIsDelete: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.InsertNote(&models.Note{
+		ID: "note", NoteID: "local-note", ServerNoteID: "remote-note",
+		NotebookID: "local-book", UserID: "user1", Title: "Cached note",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	info := models.NewSyncInfo()
+	if err := NewSyncService(database, api.NewClient()).processNotebookSync(&models.Notebook{
+		NotebookID: "remote-book", UserID: "user1", IsDeleted: true,
+	}, info); err != nil {
+		t.Fatal(err)
+	}
+	if pending, err := database.HasPendingChanges("user1"); err != nil || pending {
+		t.Fatalf("remote deletion left pending changes: pending=%v err=%v", pending, err)
+	}
+	if books, err := database.GetNotebooks("user1"); err != nil || len(books) != 0 {
+		t.Fatalf("deleted notebook remains visible: books=%+v err=%v", books, err)
+	}
+	if note, err := database.GetNote("local-note"); err != nil || note == nil {
+		t.Fatalf("referencing note was lost before note sync: note=%+v err=%v", note, err)
 	}
 }
 

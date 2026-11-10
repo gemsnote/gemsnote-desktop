@@ -159,13 +159,13 @@ func (s *Service) round(user *models.User, attempt int) error {
 		if api.IsSharedUnsupported(err) {
 			state = "unsupported"
 		}
-		_ = s.db.EnsureSharedAccount(accountID, user.Host, user.ID, 0, state)
+		_ = s.db.EnsureSharedAccount(accountID, user.Host, user.ServerUserID(), 0, state)
 		if state == "unsupported" {
 			_ = s.db.SetSharedProbeBackoff(accountID, timeNow()+probeBackoffSeconds)
 		}
 		return err
 	}
-	if err = s.db.EnsureSharedAccount(accountID, user.Host, user.ID, capability.ProtocolVersion, "supported"); err != nil {
+	if err = s.db.EnsureSharedAccount(accountID, user.Host, user.ServerUserID(), capability.ProtocolVersion, "supported"); err != nil {
 		return err
 	}
 	_ = s.db.SetSharedProbeBackoff(accountID, 0)

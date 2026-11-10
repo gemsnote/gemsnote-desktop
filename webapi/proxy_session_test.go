@@ -325,14 +325,14 @@ func TestProfileAvatarUsesTokenAndCachesImage(t *testing.T) {
 
 func TestRemoteLoginReportsWhetherAccountCacheExists(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		withCache bool
-		savedHost string
+		name                 string
+		withCache, wantCache bool
+		savedHost            string
 	}{
-		{name: "fresh account", withCache: false},
-		{name: "cached account", withCache: true},
-		{name: "cache with missing saved host", withCache: true, savedHost: "missing"},
-		{name: "cache with changed server address", withCache: true, savedHost: "https://old-address.example"},
+		{name: "fresh account"},
+		{name: "cached account", withCache: true, wantCache: true},
+		{name: "cache with missing saved host is isolated", withCache: true, savedHost: "missing"},
+		{name: "same remote user ID on another server is isolated", withCache: true, savedHost: "https://old-address.example"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			authCalls, profileCalls := 0, 0
@@ -379,14 +379,33 @@ func TestRemoteLoginReportsWhetherAccountCacheExists(t *testing.T) {
 			}
 			var result map[string]any
 			e.postJSON(t, "/api2/auth/session", url.Values{"email": {"tester"}, "pwd": {"secret"}}, &result)
-			if result["Ok"] != true || !sessionLive || hookCache != tc.withCache || (result["SyncChoiceRequired"] == true) != tc.withCache {
+			if result["Ok"] != true || !sessionLive || hookCache != tc.wantCache || (result["SyncChoiceRequired"] == true) != tc.wantCache {
 				t.Fatalf("login cache decision mismatch: result=%v sessionLive=%v hookCache=%v", result, sessionLive, hookCache)
 			}
 			if authCalls != 1 || profileCalls != 0 {
 				t.Fatalf("login performed redundant requests: auth=%d profile=%d", authCalls, profileCalls)
 			}
-			if paused, err := e.db.GetConfig("sync:paused:user1"); err != nil || paused != "true" {
+			active, err := e.db.GetActiveUser()
+			if err != nil || active == nil {
+				t.Fatalf("active account: %+v %v", active, err)
+			}
+			if paused, err := e.db.GetConfig("sync:paused:" + active.ID); err != nil || paused != "true" {
 				t.Fatalf("auto sync must remain paused until the user decides: paused=%s err=%v", paused, err)
+			}
+			if tc.withCache && !tc.wantCache {
+				if active.ID == "user1" || active.ServerUserID() != "user1" {
+					t.Fatalf("remote account was not host-scoped: %+v", active)
+				}
+				if count, err := e.db.CountAllNotes(active.ID); err != nil || count != 0 {
+					t.Fatalf("new server exposed previous cache: count=%d err=%v", count, err)
+				}
+				if books, err := e.db.GetNotebooks(active.ID); err != nil || len(books) != 0 {
+					t.Fatalf("new server exposed previous notebooks: books=%+v err=%v", books, err)
+				}
+				old, err := e.db.GetUser("user1")
+				if err != nil || old == nil || (old.Host != tc.savedHost && tc.savedHost != "missing") {
+					t.Fatalf("previous account was overwritten: old=%+v err=%v", old, err)
+				}
 			}
 		})
 	}

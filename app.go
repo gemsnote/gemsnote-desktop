@@ -91,6 +91,7 @@ func (a *App) restoreSession() {
 		a.api.SetHost(user.Host)
 	}
 
+	a.db.SetCurrentUser(user.ID)
 	a.files.InitUserDirs(user.ID)
 }
 
@@ -119,6 +120,7 @@ func (a *App) GetAttachDir() string {
 
 func (a *App) Login(email, password, host string) map[string]interface{} {
 	a.stopSessionSync()
+	host = db.NormalizeServerURL(host)
 	resp, err := a.api.Auth(email, password, host)
 	if err != nil {
 		return map[string]interface{}{"Ok": false, "Msg": err.Error()}
@@ -128,22 +130,23 @@ func (a *App) Login(email, password, host string) map[string]interface{} {
 		return map[string]interface{}{"Ok": false, "Msg": resp.Msg}
 	}
 
+	localUserID, existing, err := a.db.ResolveRemoteAccount(host, resp.UserID)
+	if err != nil {
+		return map[string]interface{}{"Ok": false, "Msg": fmt.Sprintf("resolve local account: %v", err)}
+	}
 	user := &models.User{
-		ID:       resp.UserID,
-		Username: resp.Username,
-		Email:    resp.Email,
-		Token:    resp.Token,
-		Host:     host,
-		IsActive: true,
+		ID:           localUserID,
+		RemoteUserID: resp.UserID,
+		Username:     resp.Username,
+		Email:        resp.Email,
+		Token:        resp.Token,
+		Host:         host,
+		IsActive:     true,
 	}
 
 	hasLocalCache, err := a.db.HasAccountCache(user.ID)
 	if err != nil {
 		return map[string]interface{}{"Ok": false, "Msg": fmt.Sprintf("read local account cache: %v", err)}
-	}
-	existing, err := a.db.GetUser(user.ID)
-	if err != nil {
-		return map[string]interface{}{"Ok": false, "Msg": err.Error()}
 	}
 	if existing != nil {
 		user.LastSyncUsn = existing.LastSyncUsn

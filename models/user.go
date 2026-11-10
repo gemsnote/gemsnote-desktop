@@ -4,6 +4,7 @@ import "time"
 
 type User struct {
 	ID            string     `json:"_id"`
+	RemoteUserID  string     `json:"remote_user_id,omitempty"`
 	Username      string     `json:"username"`
 	Email         string     `json:"email,omitempty"`
 	Pwd           string     `json:"pwd,omitempty"`
@@ -20,6 +21,18 @@ type User struct {
 	State         string     `json:"state,omitempty"`
 	CreatedTime   *time.Time `json:"created_time,omitempty"`
 	LastLoginTime *time.Time `json:"last_login_time,omitempty"`
+}
+
+// ServerUserID returns the identity assigned by the remote Gemsnote server.
+// Legacy cache rows used that value directly as their local primary key.
+func (u *User) ServerUserID() string {
+	if u == nil {
+		return ""
+	}
+	if u.RemoteUserID != "" {
+		return u.RemoteUserID
+	}
+	return u.ID
 }
 
 type UserAPI struct {

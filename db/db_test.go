@@ -1,10 +1,53 @@
 package db
 
 import (
+	"database/sql"
+	"path/filepath"
 	"testing"
 
 	"github.com/gemsnote/gemsnote/models"
 )
+
+func TestVersionFourDatabaseAddsRemoteAccountIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = raw.Exec(`
+		CREATE TABLE users (
+			_id TEXT PRIMARY KEY, username TEXT NOT NULL, email TEXT, pwd TEXT,
+			token TEXT, host TEXT, last_sync_usn INTEGER DEFAULT -1,
+			last_sync_time INTEGER, notebook_usn INTEGER DEFAULT -1,
+			note_usn INTEGER DEFAULT -1, tag_usn INTEGER DEFAULT -1,
+			is_active INTEGER DEFAULT 0, is_local INTEGER DEFAULT 0,
+			has_db INTEGER DEFAULT 0, state TEXT, created_time INTEGER,
+			last_login_time INTEGER
+		);
+		INSERT INTO users(_id,username,email,pwd,token,host,state,is_local) VALUES
+			('remote-user','remote','','','','https://notes.example','',0),
+			('local-user','local','','','','','',1);
+		PRAGMA user_version=4;
+	`)
+	if err != nil {
+		raw.Close()
+		t.Fatal(err)
+	}
+	raw.Close()
+	database, err := New(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	remote, err := database.GetUser("remote-user")
+	if err != nil || remote == nil || remote.RemoteUserID != "remote-user" {
+		t.Fatalf("remote identity migration failed: user=%+v err=%v", remote, err)
+	}
+	local, err := database.GetUser("local-user")
+	if err != nil || local == nil || local.RemoteUserID != "" {
+		t.Fatalf("local identity migration failed: user=%+v err=%v", local, err)
+	}
+}
 
 func TestNewInMemory(t *testing.T) {
 	database, err := NewInMemory()
@@ -51,6 +94,53 @@ func TestInsertAndGetUser(t *testing.T) {
 	}
 }
 
+func TestRemoteAccountsAndObjectMappingsAreScopedByServer(t *testing.T) {
+	database, err := NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	const remoteUserID = "507f1f77bcf86cd799439011"
+	firstID, first, err := database.ResolveRemoteAccount("https://one.example/", remoteUserID)
+	if err != nil || first != nil || firstID != remoteUserID {
+		t.Fatalf("first account resolution: id=%q user=%+v err=%v", firstID, first, err)
+	}
+	if err := database.InsertUser(&models.User{ID: firstID, RemoteUserID: remoteUserID, Host: "https://one.example"}); err != nil {
+		t.Fatal(err)
+	}
+	secondID, second, err := database.ResolveRemoteAccount("https://two.example", remoteUserID)
+	if err != nil || second != nil || secondID == firstID || len(secondID) != 24 {
+		t.Fatalf("second account resolution: id=%q user=%+v err=%v", secondID, second, err)
+	}
+	if err := database.InsertUser(&models.User{ID: secondID, RemoteUserID: remoteUserID, Host: "https://two.example"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var localBooks, localNotes []string
+	for _, userID := range []string{firstID, secondID} {
+		database.SetCurrentUser(userID)
+		book, err := database.AddNotebookForce(&models.Notebook{NotebookID: "remote-book", UserID: userID, Title: userID})
+		if err != nil {
+			t.Fatal(err)
+		}
+		note, err := database.AddNoteForce(&models.Note{NoteID: "remote-note", NotebookID: "remote-book", UserID: userID, Title: userID, ContentPresent: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		localBooks = append(localBooks, book.NotebookID)
+		localNotes = append(localNotes, note.NoteID)
+		if got, _ := database.GetNotebookByServerID("remote-book"); got == nil || got.UserID != userID || got.NotebookID != book.NotebookID {
+			t.Fatalf("notebook mapping crossed accounts: got=%+v user=%s", got, userID)
+		}
+		if got, _ := database.GetNoteByServerID("remote-note"); got == nil || got.UserID != userID || got.NoteID != note.NoteID {
+			t.Fatalf("note mapping crossed accounts: got=%+v user=%s", got, userID)
+		}
+	}
+	if localBooks[0] == localBooks[1] || localNotes[0] == localNotes[1] {
+		t.Fatalf("local object IDs collided: books=%v notes=%v", localBooks, localNotes)
+	}
+}
+
 func TestHasAccountCacheIgnoresUserRowAndDetectsContent(t *testing.T) {
 	database, err := NewInMemory()
 	if err != nil {
@@ -77,6 +167,9 @@ func TestHasAccountCacheIncludesSharedOnlyData(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer database.Close()
+	if err := database.InsertUser(&models.User{ID: "user1", RemoteUserID: "user1", Username: "tester", Host: "https://example.test"}); err != nil {
+		t.Fatal(err)
+	}
 	accountID := SharedAccountID("https://example.test", "user1")
 	if err := database.EnsureSharedAccount(accountID, "https://example.test", "user1", 1, "supported"); err != nil {
 		t.Fatal(err)

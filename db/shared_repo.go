@@ -16,12 +16,19 @@ import (
 	"github.com/gemsnote/gemsnote/utils"
 )
 
-func SharedAccountID(host, userID string) string {
-	host = strings.TrimRight(strings.ToLower(strings.TrimSpace(host)), "/")
+func NormalizeServerURL(host string) string {
+	host = strings.TrimRight(strings.TrimSpace(host), "/")
 	if u, err := url.Parse(host); err == nil {
+		u.Scheme = strings.ToLower(u.Scheme)
+		u.Host = strings.ToLower(u.Host)
 		u.Fragment, u.RawQuery = "", ""
 		host = strings.TrimRight(u.String(), "/")
 	}
+	return host
+}
+
+func SharedAccountID(host, userID string) string {
+	host = NormalizeServerURL(host)
 	sum := sha256.Sum256([]byte(host + "\x00" + userID))
 	return hex.EncodeToString(sum[:12])
 }

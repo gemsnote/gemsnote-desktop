@@ -109,8 +109,19 @@ func (s *SyncService) sendNotebookChanges(userID string, syncInfo *models.SyncIn
 		} else if nb.LocalIsDelete {
 			var resp *api.APIResponse
 			resp, apiErr = s.api.DeleteNotebook(nb)
-			if resp != nil && resp.Ok {
-				s.db.SetNotebookNotDirty(nb.NotebookID)
+			if apiErr != nil && isConflictError(apiErr) {
+				if resolved, resolveErr := s.resolveNotebookConflict(nb, syncInfo); resolveErr != nil {
+					apiErr = fmt.Errorf("resolve notebook conflict: %w", resolveErr)
+				} else if resolved {
+					continue
+				}
+			}
+			if resp != nil && (resp.Ok || resp.Msg == "notExists") {
+				if err := s.db.ApplyRemoteNotebookDelete(nb.NotebookID); err != nil {
+					apiErr = err
+				} else {
+					apiErr = nil
+				}
 			} else if apiErr == nil {
 				apiErr = fmt.Errorf("delete notebook failed")
 			}
@@ -120,6 +131,13 @@ func (s *SyncService) sendNotebookChanges(userID string, syncInfo *models.SyncIn
 			continue
 		} else {
 			serverNb, apiErr = s.api.UpdateNotebook(s.prepareNotebookForUpload(nb))
+			if apiErr != nil && isConflictError(apiErr) {
+				if resolved, resolveErr := s.resolveNotebookConflict(nb, syncInfo); resolveErr != nil {
+					apiErr = fmt.Errorf("resolve notebook conflict: %w", resolveErr)
+				} else if resolved {
+					continue
+				}
+			}
 			if apiErr != nil && isMissingRemoteNotebook(apiErr) {
 				serverNb, apiErr = s.api.AddNotebook(s.prepareNotebookForUpload(nb))
 			}
@@ -145,6 +163,42 @@ func (s *SyncService) sendNotebookChanges(userID string, syncInfo *models.SyncIn
 	}
 
 	return firstErr
+}
+
+// resolveNotebookConflict refreshes one notebook from the authoritative
+// server snapshot. Notebook title, parent and ordering are metadata: unlike a
+// note body conflict they do not create a duplicate, and the server version
+// wins so a stale dirty row cannot block every subsequent sync.
+func (s *SyncService) resolveNotebookConflict(local *models.Notebook, syncInfo *models.SyncInfo) (bool, error) {
+	if local == nil || local.ServerNotebookID == "" {
+		return false, nil
+	}
+	afterUsn := int64(-1)
+	for {
+		if err := s.api.Context().Err(); err != nil {
+			return false, err
+		}
+		notebooks, err := s.api.GetSyncNotebooks(afterUsn, s.maxEntry)
+		if err != nil {
+			return false, err
+		}
+		for _, remote := range notebooks {
+			if remote != nil && remote.NotebookID == local.ServerNotebookID {
+				if err := s.processNotebookSync(remote, syncInfo); err != nil {
+					return false, err
+				}
+				return true, nil
+			}
+		}
+		if len(notebooks) < s.maxEntry {
+			return false, nil
+		}
+		nextUsn := notebooks[len(notebooks)-1].Usn
+		if nextUsn <= afterUsn {
+			return false, fmt.Errorf("notebook snapshot cursor did not advance")
+		}
+		afterUsn = nextUsn
+	}
 }
 
 func (s *SyncService) sendNoteChanges(userID string, syncInfo *models.SyncInfo) error {

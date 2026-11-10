@@ -60,7 +60,7 @@ func refreshAccountAvatar(ctx context.Context, user models.User, database *db.Da
 	}
 	err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&profile)
 	resp.Body.Close()
-	if err != nil || profile.UserID != user.ID {
+	if err != nil || profile.UserID != user.ServerUserID() {
 		return fmt.Errorf("invalid avatar profile")
 	}
 	if ctx.Err() != nil {

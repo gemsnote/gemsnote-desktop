@@ -1265,46 +1265,60 @@ func (h *Handler) adoptServerUser(email, pwd string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	host = db.NormalizeServerURL(host)
+	remoteUserID := serverUser.ID
+	localUserID, existing, err := h.DB.ResolveRemoteAccount(host, remoteUserID)
+	if err != nil {
+		return false, err
+	}
+	localUser := &models.User{
+		ID:           localUserID,
+		RemoteUserID: remoteUserID,
+		Username:     serverUser.Username,
+		Email:        serverUser.Email,
+		Token:        h.Proxy.token,
+		Host:         host,
+		IsActive:     true,
+	}
 	// Personal tables are keyed by user ID, so inspect the actual rows a
 	// reset would remove even if the saved host is missing or has changed.
 	// Never interpret a failed cache lookup as an empty account.
-	hasLocalCache, err := h.DB.HasAccountCache(serverUser.ID)
-	if err != nil {
-		return false, err
-	}
-	existing, err := h.DB.GetUser(serverUser.ID)
+	hasLocalCache, err := h.DB.HasAccountCache(localUser.ID)
 	if err != nil {
 		return false, err
 	}
 	if existing != nil {
-		if serverUser.Username == "" {
-			serverUser.Username = existing.Username
+		if localUser.Username == "" {
+			localUser.Username = existing.Username
 		}
-		if serverUser.Email == "" {
-			serverUser.Email = existing.Email
+		if localUser.Email == "" {
+			localUser.Email = existing.Email
 		}
+		localUser.LastSyncUsn = existing.LastSyncUsn
+		localUser.NotebookUsn = existing.NotebookUsn
+		localUser.NoteUsn = existing.NoteUsn
+		localUser.TagUsn = existing.TagUsn
 	}
-	serverUser.Host = host
-	serverUser.Pwd = utils.MD5WithSalt(pwd, serverUser.ID)
+	localUser.Pwd = utils.MD5WithSalt(pwd, localUser.ID)
 	if existing != nil {
-		err = h.DB.UpdateUser(serverUser)
+		err = h.DB.UpdateUser(localUser)
 	} else {
-		err = h.DB.InsertUser(serverUser)
+		err = h.DB.InsertUser(localUser)
 	}
 	if err != nil {
 		return false, err
 	}
 	// Pause before making the session visible to the background sync timer.
-	if err := h.DB.SetConfig("sync:paused:"+serverUser.ID, "true"); err != nil {
+	if err := h.DB.SetConfig("sync:paused:"+localUser.ID, "true"); err != nil {
 		return false, err
 	}
-	if err := h.DB.SwitchUser(serverUser.ID); err != nil {
+	if err := h.DB.SwitchUser(localUser.ID); err != nil {
 		return false, err
 	}
-	h.DB.SetCurrentUser(serverUser.ID)
-	h.Files.InitUserDirs(serverUser.ID)
+	h.DB.SetCurrentUser(localUser.ID)
+	h.Files.InitUserDirs(localUser.ID)
 	if h.Proxy.token != "" {
-		h.DB.UpdateUserToken(serverUser.ID, h.Proxy.token)
+		h.DB.UpdateUserToken(localUser.ID, h.Proxy.token)
 	}
 	h.DB.SetConfig("proxy:email", email)
 	h.DB.SetConfig("proxy:pwd", pwd)

@@ -182,18 +182,28 @@ func (d *Database) GetNotebook(notebookID string) (*models.Notebook, error) {
 }
 
 func (d *Database) GetNotebookByServerID(serverNotebookID string) (*models.Notebook, error) {
-	row := d.db.QueryRow(`
+	query := `
 		SELECT _id, notebook_id, server_notebook_id, user_id, parent_notebook_id,
 			title, seq, number_notes, url_title, is_blog, is_trash, usn,
 			is_dirty, local_is_new, local_is_delete, created_time, updated_time
-		FROM notebooks WHERE server_notebook_id = ?
-	`, serverNotebookID)
+		FROM notebooks WHERE server_notebook_id = ?`
+	args := []any{serverNotebookID}
+	if userID := d.GetCurrentUserID(); userID != "" {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	row := d.db.QueryRow(query, args...)
 
 	return d.scanNotebook(row)
 }
 
 func (d *Database) GetNotebookIDByServerID(serverNotebookID string) (string, error) {
-	row := d.db.QueryRow(`SELECT notebook_id FROM notebooks WHERE server_notebook_id = ?`, serverNotebookID)
+	query, args := `SELECT notebook_id FROM notebooks WHERE server_notebook_id = ?`, []any{serverNotebookID}
+	if userID := d.GetCurrentUserID(); userID != "" {
+		query += ` AND user_id = ?`
+		args = append(args, userID)
+	}
+	row := d.db.QueryRow(query, args...)
 	var notebookID string
 	err := row.Scan(&notebookID)
 	if err == sql.ErrNoRows {
@@ -245,6 +255,33 @@ func (d *Database) DeleteNotebookForce(notebookID string) error {
 	return err
 }
 
+// ApplyRemoteNotebookDelete removes a server-deleted notebook when no cached
+// note still references it. Notebook changes are pulled before note changes,
+// so referenced rows cannot always be deleted immediately because of the
+// notes.notebook_id foreign key. Keep such rows as clean, hidden tombstones;
+// they must not remain dirty after the server deletion has been accepted.
+func (d *Database) ApplyRemoteNotebookDelete(notebookID string) error {
+	result, err := d.db.Exec(`
+		DELETE FROM notebooks
+		WHERE notebook_id = ?
+		  AND NOT EXISTS (SELECT 1 FROM notes WHERE notebook_id = ?)
+	`, notebookID, notebookID)
+	if err != nil {
+		return err
+	}
+	if affected, err := result.RowsAffected(); err != nil {
+		return err
+	} else if affected > 0 {
+		return nil
+	}
+	_, err = d.db.Exec(`
+		UPDATE notebooks
+		SET is_dirty = 0, local_is_new = 0, local_is_delete = 1, is_trash = 1
+		WHERE notebook_id = ?
+	`, notebookID)
+	return err
+}
+
 func (d *Database) DeleteLocalNotebook(notebookID string) error {
 	_, err := d.db.Exec(`DELETE FROM notebooks WHERE notebook_id = ?`, notebookID)
 	return err
@@ -276,14 +313,20 @@ func (d *Database) SetNotebookNotDirty(notebookID string) error {
 }
 
 func (d *Database) AddNotebookForce(nb *models.Notebook) (*models.Notebook, error) {
-	if nb.ID == "" {
-		nb.ID = utils.ObjectId()
-	}
+	// Remote IDs are only unique inside one server. Keep them as mappings and
+	// allocate local primary keys when another account already cached the same
+	// object ID.
+	nb.ID = utils.ObjectId()
 	if nb.NotebookID == "" {
 		nb.NotebookID = nb.ID
 	}
 	if nb.ServerNotebookID == "" && nb.NotebookID != "" {
 		nb.ServerNotebookID = nb.NotebookID
+	}
+	if existing, err := d.GetNotebook(nb.NotebookID); err != nil {
+		return nil, err
+	} else if existing != nil && existing.UserID != nb.UserID {
+		nb.NotebookID = utils.ObjectId()
 	}
 	nb.IsDirty = false
 	nb.LocalIsNew = false
