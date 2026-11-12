@@ -141,3 +141,22 @@ func TestSharingSuggestionsSurviveWithoutCachedOwnedNotes(t *testing.T) {
 		t.Fatal("cross-server suggestions leaked")
 	}
 }
+
+func TestSharedOwnerNamesRemainAvailableOfflineAndAccountScoped(t *testing.T) {
+	e := newTestEnv(t)
+	uid, _ := e.login(t)
+	user, _ := e.db.GetActiveUser()
+	encoded, _ := json.Marshal(sharingNavigation{Owners: []sharingRecipient{{UserId: "author", Username: "Original author"}}})
+	if err := e.db.SetConfig("sharing:"+db.SharedAccountID(user.Host, uid), string(encoded)); err != nil {
+		t.Fatal(err)
+	}
+	nav := e.handler.cachedSharing(user)
+	if len(nav.Owners) != 1 || nav.Owners[0].UserId != "author" || nav.Owners[0].Username != "Original author" {
+		t.Fatalf("lost sharer identity: %+v", nav)
+	}
+	other := *user
+	other.Host = "https://other.test"
+	if len(e.handler.cachedSharing(&other).Owners) != 0 {
+		t.Fatal("cross-server owner names leaked")
+	}
+}
