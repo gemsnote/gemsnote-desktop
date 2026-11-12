@@ -180,6 +180,26 @@ func TestAddNotePreservesCreationTimeButUsesServerModificationTime(t *testing.T)
 	}
 }
 
+func TestAddImportedNotePreservesModificationTime(t *testing.T) {
+	created, _ := time.Parse(time.RFC3339Nano, "2020-01-02T03:04:05.123+08:00")
+	updated, _ := time.Parse(time.RFC3339Nano, "2021-02-03T04:05:06.456Z")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if r.Form.Get("CreatedTime") != created.Format(time.RFC3339Nano) || r.Form.Get("UpdatedTime") != updated.Format(time.RFC3339Nano) {
+			t.Errorf("import times lost: %v", r.Form)
+		}
+		w.Write([]byte(`{"NoteId":"507f1f77bcf86cd799439011","Usn":1}`))
+	}))
+	defer server.Close()
+	client := NewClient()
+	client.SetHost(server.URL)
+	if _, err := client.AddNote(&models.Note{NoteID: "507f1f77bcf86cd799439011", NotebookID: "507f191e810c19729de860ea", CreatedTime: &created, ImportedUpdatedTime: &updated}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestLastSyncStateTimeAcceptsStringAndNumber(t *testing.T) {
 	for _, tc := range []struct {
 		body string

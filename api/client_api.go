@@ -540,8 +540,9 @@ func (c *Client) UpdateNotebook(nb *models.Notebook) (*models.Notebook, error) {
 
 func (c *Client) DeleteNotebook(nb *models.Notebook) (*APIResponse, error) {
 	resp, err := c.post("client/notebook/delete", map[string]string{
-		"notebookId": nb.ServerNotebookID,
-		"usn":        strconv.FormatInt(nb.Usn, 10),
+		"notebookId":  nb.ServerNotebookID,
+		"usn":         strconv.FormatInt(nb.Usn, 10),
+		"deleteNotes": strconv.FormatBool(nb.DeleteNotes),
 	}, nil)
 	if err != nil {
 		return nil, err
@@ -574,7 +575,10 @@ func (c *Client) AddNote(note *models.Note) (*models.Note, error) {
 	if note.CreatedTime != nil {
 		data["CreatedTime"] = note.CreatedTime.Format(time.RFC3339Nano)
 	}
-	// UpdatedTime is assigned by the server; local edit time stays in SQLite.
+	if note.ImportedUpdatedTime != nil {
+		data["UpdatedTime"] = note.ImportedUpdatedTime.Format(time.RFC3339Nano)
+	}
+	// Ordinary edits continue to use server-assigned modification times.
 
 	resp, err := c.postNoteUpload("note/addNote", data, nil)
 	if err != nil {

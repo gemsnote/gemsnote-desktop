@@ -26,7 +26,7 @@ func (s *SyncService) sendChanges(syncInfo *models.SyncInfo) error {
 	userID := s.db.GetCurrentUserID()
 	var firstErr error
 
-	if err := s.sendNotebookChanges(userID, syncInfo); err != nil {
+	if err := s.sendNotebookChanges(userID, syncInfo, true); err != nil {
 		logrus.Errorf("Send notebook changes error: %v", err)
 		firstErr = err
 	}
@@ -44,11 +44,14 @@ func (s *SyncService) sendChanges(syncInfo *models.SyncInfo) error {
 			firstErr = err
 		}
 	}
+	if firstErr == nil {
+		firstErr = s.sendNotebookChanges(userID, syncInfo)
+	}
 
 	return firstErr
 }
 
-func (s *SyncService) sendNotebookChanges(userID string, syncInfo *models.SyncInfo) error {
+func (s *SyncService) sendNotebookChanges(userID string, syncInfo *models.SyncInfo, deferDeletes ...bool) error {
 	if err := s.api.Context().Err(); err != nil {
 		return err
 	}
@@ -60,6 +63,9 @@ func (s *SyncService) sendNotebookChanges(userID string, syncInfo *models.SyncIn
 	// ParentNotebookId can be translated to the newly assigned server ID.
 	byID := make(map[string]*models.Notebook, len(notebooks))
 	for _, nb := range notebooks {
+		if len(deferDeletes) > 0 && deferDeletes[0] && nb.LocalIsDelete {
+			continue
+		}
 		if err := s.api.Context().Err(); err != nil {
 			return err
 		}
@@ -93,6 +99,9 @@ func (s *SyncService) sendNotebookChanges(userID string, syncInfo *models.SyncIn
 
 	var firstErr error
 	for _, nb := range notebooks {
+		if len(deferDeletes) > 0 && deferDeletes[0] && nb.LocalIsDelete {
+			continue
+		}
 		if err := s.api.Context().Err(); err != nil {
 			return err
 		}
@@ -107,6 +116,7 @@ func (s *SyncService) sendNotebookChanges(userID string, syncInfo *models.SyncIn
 		if nb.LocalIsNew {
 			serverNb, apiErr = s.api.AddNotebook(s.prepareNotebookForUpload(nb))
 		} else if nb.LocalIsDelete {
+			nb.DeleteNotes = s.db.NotebookDeleteNotes(nb.NotebookID)
 			var resp *api.APIResponse
 			resp, apiErr = s.api.DeleteNotebook(nb)
 			if apiErr != nil && isConflictError(apiErr) {
@@ -438,6 +448,14 @@ func (s *SyncService) recreateMissingNote(note *models.Note) (*models.Note, stri
 
 func (s *SyncService) prepareNoteForUpload(note *models.Note) *models.Note {
 	noteCopy := *note
+	noteCopy.ImportedUpdatedTime = s.db.ImportedNoteTime(note.NoteID)
+	// A subsequent local edit supersedes the historical import modification time.
+	if note.ContentIsDirty || note.LocalEditedTime != nil && note.UpdatedTime != nil && !note.LocalEditedTime.Equal(*note.UpdatedTime) {
+		noteCopy.ImportedUpdatedTime = nil
+	}
+	if created := s.db.ImportedNoteCreatedTime(note.NoteID); created != nil {
+		noteCopy.CreatedTime = created
+	}
 	// Local notebook IDs are intentionally independent from server IDs. API2
 	// expects NotebookId to reference the remote notebook, so translate the
 	// mapping before sending a note (otherwise the server reports

@@ -4,6 +4,7 @@ import "time"
 
 type Notebook struct {
 	ID               string     `json:"_id"`
+	DeleteNotes      bool       `json:"-"`
 	NotebookID       string     `json:"NotebookId"`
 	ServerNotebookID string     `json:"ServerNotebookId,omitempty"`
 	UserID           string     `json:"UserId"`

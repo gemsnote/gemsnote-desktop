@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/gemsnote/gemsnote/utils"
 )
@@ -25,7 +26,8 @@ func TestOfflineMarkdownImport(t *testing.T) {
 		}
 	}
 	content := "# 你好\n\n**Markdown** 正文\n"
-	payload, err := json.Marshal(map[string]any{"noteId": noteID, "notebookId": child, "title": "我的笔记", "content": content, "tags": "", "isNew": true, "isMarkdown": true})
+	created, updated := "2020-01-02T03:04:05Z", "2021-02-03T04:05:06Z"
+	payload, err := json.Marshal(map[string]any{"noteId": noteID, "notebookId": child, "title": "我的笔记", "content": content, "tags": "Go,中文", "createdTime": created, "updatedTime": updated, "isNew": true, "isMarkdown": true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,6 +53,9 @@ func TestOfflineMarkdownImport(t *testing.T) {
 		if err != nil || book == nil || book.ParentNotebookID != parent || !book.IsDirty || !book.LocalIsNew {
 			t.Fatalf("imported local notebook: %+v (%v)", book, err)
 		}
+	}
+	if note.CreatedTime.UTC().Format(time.RFC3339) != created || note.UpdatedTime.UTC().Format(time.RFC3339) != updated || len(note.Tags) != 2 || e.db.ImportedNoteTime(noteID).UTC().Format(time.RFC3339) != updated {
+		t.Fatalf("import metadata was not persisted: %+v", note)
 	}
 	if count, err := e.db.CountNotes(child); err != nil || count != 1 {
 		t.Fatalf("imported notebook count = %d, %v", count, err)

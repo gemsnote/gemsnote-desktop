@@ -260,6 +260,14 @@ func (h *Handler) respondDocument(w http.ResponseWriter, noteID, userID string) 
 		h.fail(w, "notExists")
 		return
 	}
+	if note.LocalIsNew {
+		if created := h.DB.ImportedNoteCreatedTime(noteID); created != nil {
+			note.CreatedTime = created
+		}
+		if updated := h.DB.ImportedNoteTime(noteID); updated != nil {
+			note.UpdatedTime = updated
+		}
+	}
 	h.writeJSON(w, map[string]any{
 		"Note":     h.documentNote(note),
 		"Content":  normalizeContent(note.Content),
@@ -484,6 +492,17 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		now := time.Now()
+		created, updated := now, now
+		for key, target := range map[string]*time.Time{"createdTime": &created, "updatedTime": &updated} {
+			if value := h.form(r, key); value != "" {
+				parsed, err := time.Parse(time.RFC3339Nano, value)
+				if err != nil {
+					h.fail(w, "invalidTime")
+					return
+				}
+				*target = parsed
+			}
+		}
 		note := &models.Note{
 			ID:          utils.ObjectId(),
 			NoteID:      noteID,
@@ -496,10 +515,13 @@ func (h *Handler) save(w http.ResponseWriter, r *http.Request) {
 			IsMarkdown:  isMarkdown,
 			IsDirty:     true,
 			LocalIsNew:  true,
-			CreatedTime: &now,
-			UpdatedTime: &now,
+			CreatedTime: &created,
+			UpdatedTime: &updated,
 		}
-		if err := h.DB.InsertNote(note); err != nil {
+		if h.form(r, "updatedTime") != "" {
+			note.ImportedUpdatedTime = &updated
+		}
+		if err := h.DB.InsertImportedNote(note); err != nil {
 			h.fail(w, "saveFailed")
 			return
 		}
@@ -675,11 +697,7 @@ func (h *Handler) deleteNotebook(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, "notExists")
 		return
 	}
-	if has, _ := h.DB.HasNotes(notebookID); has {
-		h.fail(w, "notebookHasNotes")
-		return
-	}
-	if err := h.DB.DeleteNotebook(notebookID); err != nil {
+	if err := h.DB.DeleteNotebookWithNotes(user.ID, notebookID, h.form(r, "deleteNotes") == "true"); err != nil {
 		h.fail(w, err.Error())
 		return
 	}

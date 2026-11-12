@@ -3,6 +3,18 @@
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
+CREATE TABLE IF NOT EXISTS note_import_times (
+    note_id TEXT PRIMARY KEY,
+    created_time TEXT NOT NULL,
+    updated_time TEXT NOT NULL,
+    FOREIGN KEY (note_id) REFERENCES notes(note_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS notebook_delete_options (
+    notebook_id TEXT PRIMARY KEY,
+    FOREIGN KEY (notebook_id) REFERENCES notebooks(notebook_id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS users (
     _id TEXT PRIMARY KEY,
     remote_user_id TEXT DEFAULT '',

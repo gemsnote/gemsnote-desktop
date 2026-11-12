@@ -192,6 +192,17 @@ API2 共享快照创建响应的 `Sharing` 保存到按服务器地址和用户 
 测试：`go test ./webapi ./sharedsync ./db ./api`；共享前端构建后，在服务端仓库执行 `node frontend/tests/shared-notes.mjs` 验证 Web/desktop 中英文共享导航、只读按钮、移动计数、复制、RT/MD 标记，以及用户名/邮箱共享、历史接收者的键盘/点击选择。
 
 
+## Hugo Markdown 导入
+
+共享 Vue 前端统一解析单文件和 ZIP 内的 Hugo YAML、TOML、JSON front matter，读取标题、
+`date`、`lastmod`、`tags`，从正文移除整个元数据块。普通 MD 使用文件名、当前时间和空标签；
+有元数据时不使用文件名代替缺失标题，只提供一个日期时用于两项时间，两项均缺失或日期无效则报错。
+ZIP 根目录文件导入所选笔记本，目录成为子笔记本，不创建 ZIP 文件名对应的外层目录。
+本地 bridge 保存导入时间，SQLite 的 `note_import_times` 保留待上传的原始时间，
+创建远端笔记时传递 `CreatedTime`、`UpdatedTime`；普通后续编辑继续使用服务端更新时间。
+删除笔记本可选将全部笔记放入回收站，默认不勾选。有子笔记本时需先处理；
+离线删除保存待同步状态，上传笔记变更成功后才删除远端笔记本。
+
 ## Markdown Mermaid 预览
 
 Desktop 复用服务端仓库的 Vue `NotePreview` / `MermaidDiagram` 组件。
