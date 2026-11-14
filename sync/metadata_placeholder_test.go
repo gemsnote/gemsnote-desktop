@@ -20,7 +20,7 @@ func TestSyncIgnoresMetadataContentPlaceholder(t *testing.T) {
 		body        string
 	}{
 		{"incremental web edit", false, false, "web body"},
-		{"full repairs same usn", true, false, "repaired web body"},
+		{"full repairs missing body", true, false, "repaired web body"},
 		{"new note", false, true, "new web note"},
 		{"real empty body", false, false, ""},
 	} {
@@ -34,12 +34,16 @@ func TestSyncIgnoresMetadataContentPlaceholder(t *testing.T) {
 					w.Write([]byte(`[{"NotebookId":"remote-book","UserId":"u","Title":"Book","Usn":1}]`))
 				case "/api2/note/getSyncNotes":
 					w.Write([]byte(`[{"NoteId":"remote-note","NotebookId":"remote-book","UserId":"u","Title":"Web title","Content":"","Usn":2}]`))
-				case "/api2/note/getNoteContent":
+				case "/api2/note/getNoteContents":
 					contentCalls++
-					if r.URL.Query().Get("noteId") != "remote-note" {
+					var request struct {
+						IDs []string `json:"noteIds"`
+					}
+					json.NewDecoder(r.Body).Decode(&request)
+					if len(request.IDs) != 1 || request.IDs[0] != "remote-note" {
 						t.Errorf("wrong remote ID: %s", r.URL)
 					}
-					json.NewEncoder(w).Encode(map[string]any{"Content": tc.body})
+					json.NewEncoder(w).Encode([]map[string]any{{"NoteId": "remote-note", "NotebookId": "remote-book", "UserId": "u", "Title": "Web title", "Usn": 2, "Content": tc.body}})
 				case "/api2/tag/getSyncTags":
 					w.Write([]byte(`[]`))
 				default:
@@ -67,7 +71,7 @@ func TestSyncIgnoresMetadataContentPlaceholder(t *testing.T) {
 				if tc.full {
 					usn = 2
 				}
-				if err = database.InsertNote(&models.Note{ID: "n", NoteID: "local-note", ServerNoteID: "remote-note", NotebookID: "local-book", UserID: "u", Title: "Old title", Content: "old cached body", Usn: usn}); err != nil {
+				if err = database.InsertNote(&models.Note{ID: "n", NoteID: "local-note", ServerNoteID: "remote-note", NotebookID: "local-book", UserID: "u", Title: "Old title", Content: "old cached body", Usn: usn, InitSync: tc.full}); err != nil {
 					t.Fatal(err)
 				}
 			}

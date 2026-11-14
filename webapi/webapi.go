@@ -33,10 +33,6 @@ type Handler struct {
 	// OnSessionChanged prevents background jobs from outliving a local login
 	// session. It is called for remote and explicitly local accounts.
 	OnSessionChanged func(loggedIn bool)
-	// OnLogout is called synchronously before the local session is cleared.
-	// Returning an error keeps the session active so local changes are not
-	// discarded when the final sync cannot be completed.
-	OnLogout func() error
 	// OnSync / OnFullSync run a blocking incremental or full sync on behalf of
 	// the SPA's account menu (/web/sync, /web/fullSync). The returned value is
 	// written as the JSON response; a non-nil error becomes {Ok:false,Msg}.

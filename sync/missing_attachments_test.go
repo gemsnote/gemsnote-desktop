@@ -35,8 +35,8 @@ func TestMissingAttachmentDoesNotStopNoteSyncOrDropRemoteReference(t *testing.T)
 		switch r.URL.Path {
 		case "/api2/note/getSyncNotes":
 			json.NewEncoder(w).Encode(notes)
-		case "/api2/note/getNoteContent":
-			json.NewEncoder(w).Encode(map[string]any{"Ok": true, "Content": r.URL.Query().Get("noteId") + " body"})
+		case "/api2/note/getNoteContents":
+			json.NewEncoder(w).Encode(notes)
 		case "/api2/file/getAttach":
 			if missing {
 				http.Error(w, "fileNotFound", http.StatusNotFound)

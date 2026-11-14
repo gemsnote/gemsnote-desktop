@@ -215,13 +215,7 @@ func (a *App) GetCurrentUser() map[string]interface{} {
 }
 
 func (a *App) Logout() map[string]interface{} {
-	if user, _ := a.db.GetActiveUser(); user != nil && !user.IsLocal && user.Host != "" && user.Token != "" {
-		if err := a.runFullSync(false); err != nil {
-			return map[string]interface{}{"Ok": false, "Msg": "syncFailed"}
-		}
-	}
 	a.stopSessionSync()
-	a.api.Logout()
 	a.api.SetToken("")
 	a.api.SetHost("")
 	user, _ := a.db.GetActiveUser()

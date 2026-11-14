@@ -51,7 +51,7 @@ func TestTrashedNoteNeedsNoDeletedNotebook(t *testing.T) {
 
 func TestMetadataNotePagesAreBounded(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api2/note/getSyncNotes" || r.URL.Query().Get("maxEntry") != "50" {
+		if r.URL.Path != "/api2/note/getSyncNotes" || r.URL.Query().Get("maxEntry") != "500" {
 			t.Errorf("unexpected metadata page request: %s", r.URL)
 		}
 		w.Write([]byte(`[]`))
@@ -165,28 +165,32 @@ func TestFreshSyncUsesPagedContentSnapshot(t *testing.T) {
 			w.Write([]byte(`{"Ok":true,"LastSyncUsn":102,"LastSyncTime":0}`))
 		case "/api2/notebook/getSyncNotebooks":
 			w.Write([]byte(`[{"NotebookId":"remote-book","UserId":"user1","Title":"Book","Usn":1}]`))
-		case "/api2/note/getSyncNotesWithContent":
-			contentCalls++
-			if got := r.URL.Query().Get("maxEntry"); got != "50" {
-				t.Errorf("snapshot maxEntry=%q, want 50", got)
+		case "/api2/note/getSyncNotes":
+			if r.URL.Query().Get("maxEntry") != "500" {
+				t.Error("metadata page must be 500")
 			}
-			var notes []map[string]any
-			if contentCalls > 3 {
-				t.Error("unexpected extra content page")
-				w.Write([]byte(`[]`))
-				return
-			}
-			wantCursor := []string{"-1", "51", "101"}[contentCalls-1]
-			if got := r.URL.Query().Get("afterUsn"); got != wantCursor {
-				t.Errorf("page %d cursor=%q, want %s", contentCalls, got, wantCursor)
-			}
-			start := (contentCalls - 1) * 50
-			end := min(start+50, 101)
-			for i := start; i < end; i++ {
+			notes := []map[string]any{}
+			for i := 0; i < 101; i++ {
 				id := fmt.Sprintf("remote-note-%d", i)
 				if i == 0 {
 					id = "remote-note"
 				}
+				notes = append(notes, map[string]any{"NoteId": id, "NotebookId": "remote-book", "UserId": "user1", "Usn": i + 2})
+			}
+			json.NewEncoder(w).Encode(notes)
+		case "/api2/note/getNoteContents":
+			contentCalls++
+			var request struct {
+				IDs []string `json:"noteIds"`
+			}
+			json.NewDecoder(r.Body).Decode(&request)
+			if len(request.IDs) > 20 {
+				t.Error("body batch exceeds 20")
+			}
+			notes := []map[string]any{}
+			for _, id := range request.IDs {
+				i := 0
+				fmt.Sscanf(id, "remote-note-%d", &i)
 				notes = append(notes, map[string]any{"NoteId": id, "NotebookId": "remote-book", "UserId": "user1", "Title": "Note", "Content": "snapshot body", "Usn": i + 2})
 			}
 			json.NewEncoder(w).Encode(notes)
@@ -225,7 +229,7 @@ func TestFreshSyncUsesPagedContentSnapshot(t *testing.T) {
 			t.Fatalf("snapshot note %s not cached: note=%+v err=%v", id, note, err)
 		}
 	}
-	if contentCalls != 3 || singleContentCalls != 0 {
+	if contentCalls != 6 || singleContentCalls != 0 {
 		t.Fatalf("snapshot calls=%d single content calls=%d", contentCalls, singleContentCalls)
 	}
 	completed := 0
@@ -497,8 +501,8 @@ func TestFullSyncMergesChangedServerDatabase(t *testing.T) {
 			w.Write([]byte(`[{"NotebookId":"remote-book","UserId":"user1","Title":"Remote","Usn":1}]`))
 		case "/api2/note/getSyncNotes":
 			w.Write([]byte(`[{"NoteId":"remote-only","NotebookId":"remote-book","UserId":"user1","Title":"Remote note","Usn":2},{"NoteId":"old-note","IsDeleted":true,"Usn":3}]`))
-		case "/api2/note/getNoteContent":
-			w.Write([]byte(`{"Content":"remote body"}`))
+		case "/api2/note/getNoteContents":
+			w.Write([]byte(`[{"NoteId":"remote-only","NotebookId":"remote-book","UserId":"user1","Title":"Remote note","Content":"remote body","Usn":2}]`))
 		case "/api2/tag/getSyncTags":
 			w.Write([]byte(`[]`))
 		case "/api2/client/notebook/update":

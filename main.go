@@ -5,7 +5,6 @@ package main
 import (
 	"context"
 	"embed"
-	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
@@ -102,34 +101,6 @@ func main() {
 		OnExportNote:     app.saveNoteExport,
 		OnInitialSync: func() (any, error) {
 			return app.InitialSync(), nil
-		},
-		OnLogout: func() error {
-			user, _ := database.GetActiveUser()
-			if user == nil || user.IsLocal || user.Host == "" || user.Token == "" {
-				return nil
-			}
-			pending, err := database.HasPendingChanges(user.ID)
-			if err != nil {
-				return err
-			}
-			if !pending {
-				return nil
-			}
-			syncErr := app.runFullSync(false)
-			// "Pending" only means local changes that still need uploading. A
-			// later pull/avatar/attachment failure must not prevent logout once
-			// every local dirty row has already been accepted by the server.
-			pending, pendingErr := database.HasPendingChanges(user.ID)
-			if pendingErr != nil {
-				return pendingErr
-			}
-			if !pending {
-				return nil
-			}
-			if syncErr == nil {
-				return fmt.Errorf("local changes remain pending")
-			}
-			return syncErr
 		},
 		OnSync: func() (any, error) {
 			// User profile/avatar refresh is not part of incremental note sync.

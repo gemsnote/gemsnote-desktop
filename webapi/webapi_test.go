@@ -781,28 +781,7 @@ func TestRemoteLoginDoesNotUseMatchingLocalAccount(t *testing.T) {
 	}
 }
 
-func TestLogoutSyncFailureKeepsSession(t *testing.T) {
-	e := newTestEnv(t)
-	userID := utils.ObjectId()
-	if err := e.db.InsertUser(&models.User{ID: userID, Username: "remote", Host: "https://notes.example", Token: "token", IsActive: true}); err != nil {
-		t.Fatal(err)
-	}
-	e.handler.OnLogout = func() error { return fmt.Errorf("sync unavailable") }
-	code, body := e.get(t, "/api2/logout")
-	if code != http.StatusOK || !strings.Contains(string(body), "syncFailed") {
-		t.Fatalf("logout did not report sync failure: %d %s", code, body)
-	}
-	active, _ := e.db.GetActiveUser()
-	if active == nil || active.Token != "token" {
-		t.Fatalf("session was cleared after failed sync: %+v", active)
-	}
-	_, body = e.post(t, "/api2/web/logout", url.Values{})
-	if !strings.Contains(string(body), `"Msg":"syncFailed"`) {
-		t.Fatalf("desktop logout did not report sync failure: %s", body)
-	}
-}
-
-func TestForcedLogoutKeepsPendingCacheAndClearsSession(t *testing.T) {
+func TestLogoutKeepsPendingCacheAndClearsSession(t *testing.T) {
 	e := newTestEnv(t)
 	userID := utils.ObjectId()
 	user := &models.User{ID: userID, Username: "old-name", Host: "https://notes.example", Token: "token", IsActive: true}
@@ -813,11 +792,10 @@ func TestForcedLogoutKeepsPendingCacheAndClearsSession(t *testing.T) {
 	if err := e.db.InsertNotebook(&models.Notebook{ID: "local-book", NotebookID: "local-book", UserID: userID, Title: "pending", IsDirty: true}); err != nil {
 		t.Fatal(err)
 	}
-	e.handler.OnLogout = func() error { return fmt.Errorf("must not sync") }
 	sessionLive := true
 	e.handler.OnSessionChanged = func(live bool) { sessionLive = live }
 
-	code, body := e.post(t, "/api2/web/logout", url.Values{"force": {"true"}})
+	code, body := e.post(t, "/api2/web/logout", url.Values{})
 	if code != http.StatusOK || !strings.Contains(string(body), `"Ok":true`) {
 		t.Fatalf("forced logout failed: %d %s", code, body)
 	}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,76 @@ func awaitSync[T any](t *testing.T, ch <-chan T) T {
 		t.Fatal("operation did not stop promptly")
 		var zero T
 		return zero
+	}
+}
+
+func TestLogoutCancelsSyncAndPreservesPendingCache(t *testing.T) {
+	for _, running := range []bool{false, true} {
+		t.Run(fmt.Sprint(running), func(t *testing.T) {
+			var calls atomic.Int32
+			started := make(chan struct{}, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				_, _ = io.Copy(io.Discard, r.Body)
+				started <- struct{}{}
+				<-r.Context().Done()
+			}))
+			defer server.Close()
+			database, err := db.NewInMemory()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			const userID = "507f1f77bcf86cd799439011"
+			if err = database.InsertUser(&models.User{ID: userID, Host: server.URL, Token: "token", IsActive: true}); err != nil {
+				t.Fatal(err)
+			}
+			database.SetCurrentUser(userID)
+			if err = database.InsertNotebook(&models.Notebook{ID: "b", NotebookID: "b", ServerNotebookID: "507f1f77bcf86cd799439022", UserID: userID}); err != nil {
+				t.Fatal(err)
+			}
+			if err = database.InsertNote(&models.Note{ID: "n", NoteID: "n", ServerNoteID: "507f1f77bcf86cd799439033", NotebookID: "b", UserID: userID, Content: "pending body", IsDirty: true, Usn: 1}); err != nil {
+				t.Fatal(err)
+			}
+			app := NewApp(database)
+			defer app.stopSessionSync()
+			app.sync.BackgroundProfileRefresh = nil
+			app.SetSessionLive(true)
+			var synced chan map[string]interface{}
+			if running {
+				synced = make(chan map[string]interface{}, 1)
+				go func() { synced <- app.FullSyncForce() }()
+				awaitSync(t, started)
+			}
+			loggedOut := make(chan map[string]interface{}, 1)
+			go func() { loggedOut <- app.Logout() }()
+			if result := awaitSync(t, loggedOut); result["Ok"] != true {
+				t.Fatal(result)
+			}
+			if running {
+				if result := awaitSync(t, synced); result["Cancelled"] != true {
+					t.Fatal(result)
+				}
+			}
+			want := int32(0)
+			if running {
+				want = 1
+			}
+			if calls.Load() != want {
+				t.Fatalf("logout started network requests: %d want %d", calls.Load(), want)
+			}
+			if user, _ := database.GetActiveUser(); user != nil {
+				t.Fatal("session still active")
+			}
+			stored, _ := database.GetUser(userID)
+			if stored.Token != "" || app.CanAutoSync() {
+				t.Fatal("credentials or sync session retained")
+			}
+			note, _ := database.GetNote("n")
+			if note == nil || !note.IsDirty || note.Content != "pending body" {
+				t.Fatalf("pending edits lost: %+v", note)
+			}
+		})
 	}
 }
 

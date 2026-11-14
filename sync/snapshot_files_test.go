@@ -40,14 +40,32 @@ func TestFreshSync220NotesFinishesBeforeBackgroundMedia(t *testing.T) {
 			json.NewEncoder(w).Encode([]map[string]any{{"NotebookId": bookID, "UserId": userID, "Title": "Book", "Usn": 1}})
 		case "/api2/tag/getSyncTags":
 			w.Write([]byte(`[]`))
-		case "/api2/note/getSyncNotesWithContent":
+		case "/api2/note/getSyncNotes", "/api2/note/getNoteContents":
 			after, _ := strconv.Atoi(r.URL.Query().Get("afterUsn"))
 			if after < 0 {
 				after = 0
 			}
 			limit, _ := strconv.Atoi(r.URL.Query().Get("maxEntry"))
+			requested := map[string]bool{}
+			if r.Method == "POST" {
+				var p struct {
+					IDs []string `json:"noteIds"`
+				}
+				json.NewDecoder(r.Body).Decode(&p)
+				if len(p.IDs) > 20 {
+					t.Error("body batch too large")
+				}
+				for _, id := range p.IDs {
+					requested[id] = true
+				}
+				after = 0
+				limit = count
+			}
 			notes := make([]map[string]any, 0)
 			for i := after; i < count && i < after+limit; i++ {
+				if r.Method == "POST" && !requested[noteID(i)] {
+					continue
+				}
 				id := fileID(i % 12)
 				content := strings.Repeat("Synthetic note正文 <p>test</p>\n", 2000) + fmt.Sprintf(`<img src="/api2/file/getImage?fileId=%s"><img src="/api2/file/getImage?fileId=%s">`, id, id)
 				files := []map[string]any{{"FileId": id, "IsAttach": false}}

@@ -1313,7 +1313,7 @@ func (h *Handler) verifyLocalPassword(user *models.User, password string) string
 
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	if err := h.performLogout(h.form(r, "force") == "true"); err != nil {
-		h.fail(w, "syncFailed")
+		h.fail(w, err.Error())
 		return
 	}
 	http.Redirect(w, r, "/login", http.StatusFound)
@@ -1321,18 +1321,14 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) logoutJSON(w http.ResponseWriter, r *http.Request) {
 	if err := h.performLogout(h.form(r, "force") == "true"); err != nil {
-		h.fail(w, "syncFailed")
+		h.fail(w, err.Error())
 		return
 	}
 	h.ok(w)
 }
 
-func (h *Handler) performLogout(force bool) error {
-	if !force && h.OnLogout != nil {
-		if err := h.OnLogout(); err != nil {
-			return err
-		}
-	}
+func (h *Handler) performLogout(_ bool) error {
+	// Stop and cancel account-bound writers before clearing local login state.
 	if h.OnSessionChanged != nil {
 		h.OnSessionChanged(false)
 	}

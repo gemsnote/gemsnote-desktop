@@ -23,7 +23,7 @@ func TestResetSyncDiscardsOnlyCurrentAccountCacheWithoutUpload(t *testing.T) {
 			w.Write([]byte(`{"Ok":true,"LastSyncUsn":3,"LastSyncTime":0}`))
 		case "/api2/user/info":
 			w.Write([]byte(`{"UserId":"507f1f77bcf86cd799439011","Logo":""}`))
-		case "/api2/notebook/getSyncNotebooks", "/api2/note/getSyncNotesWithContent", "/api2/tag/getSyncTags":
+		case "/api2/notebook/getSyncNotebooks", "/api2/note/getSyncNotes", "/api2/tag/getSyncTags":
 			w.Write([]byte(`[]`))
 		default:
 			uploads++

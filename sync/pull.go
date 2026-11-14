@@ -8,14 +8,13 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"github.com/gemsnote/gemsnote/api"
 	"github.com/gemsnote/gemsnote/models"
 	"github.com/gemsnote/gemsnote/utils"
 )
 
 var imageFileIDRe = regexp.MustCompile(`fileId=([a-zA-Z0-9]{24})`)
 var serverImageRe = regexp.MustCompile(`(https?://[^\s"']+)/api2/file/getImage\?fileId=([a-zA-Z0-9]{24})`)
-
-const freshSyncPageSize = 50
 
 func (s *SyncService) syncNotebooks(afterUsn int64, syncInfo *models.SyncInfo) error {
 	logrus.Info("Syncing notebooks...")
@@ -165,56 +164,84 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 	completed := 0
 
 	for {
-		pageSize := s.maxEntry
-		// Bound metadata pages as well as content snapshots. Full sync used to
-		// request 200 notes, including their file metadata, in one round trip.
-		if pageSize > freshSyncPageSize {
-			pageSize = freshSyncPageSize
-		}
+		pageSize := api.NoteMetadataPageSize
 		pageStarted := time.Now()
 		var notes []*models.Note
 		var err error
-		if withContentSnapshot {
-			notes, err = s.api.GetSyncNotesWithContent(currentUsn, pageSize)
-		} else {
-			notes, err = s.api.GetSyncNotes(currentUsn, pageSize)
-		}
+		notes, err = s.api.GetSyncNotes(currentUsn, pageSize)
+
 		if err != nil {
 			return err
 		}
+		metadataCursor := currentUsn
+		if len(notes) > 0 {
+			metadataCursor = notes[len(notes)-1].Usn
+		}
 		downloadElapsed := time.Since(pageStarted)
-
 		if len(notes) == 0 {
 			break
 		}
-
-		for _, note := range notes {
-			if err := s.api.Context().Err(); err != nil {
-				return err
-			}
-			if !note.IsDeleted {
-				remoteIDs[note.NoteID] = true
-			}
-			if err := s.processNoteSync(note, syncInfo, afterUsn < 0); err != nil {
-				return fmt.Errorf("process remote note %s: %w", note.NoteID, err)
-			}
-			if !withContentSnapshot && !note.IsDeleted && note.Files != nil {
-				if err := s.syncAttachmentSet(note); err != nil {
+		for start := 0; start < len(notes); start += api.NoteContentBatchSize {
+			chunk := notes[start:min(start+api.NoteContentBatchSize, len(notes))]
+			needed := []string{}
+			for _, note := range chunk {
+				if note.IsDeleted {
+					continue
+				}
+				local, err := s.db.GetNoteSyncState(note.NoteID)
+				if err != nil {
 					return err
 				}
-			}
-
-			if withContentSnapshot {
-				if err := s.queueSnapshotFiles(note); err != nil {
-					return err
+				if withContentSnapshot || local == nil || local.Usn != note.Usn || local.NeedsBody {
+					needed = append(needed, note.NoteID)
 				}
 			}
-			completed++
-			s.emitItemProgress("notes", completed, 0, 40)
+			byID := map[string]*models.Note{}
+			if len(needed) > 0 {
+				started := time.Now()
+				bodies, err := s.api.GetNoteContents(needed)
+				downloadElapsed += time.Since(started)
+				if err != nil {
+					return err
+				}
+				for _, body := range bodies {
+					byID[body.NoteID] = body
+				}
+			}
+			for _, meta := range chunk {
+				note := meta
+				if body := byID[meta.NoteID]; body != nil {
+					if body.Usn < meta.Usn {
+						return fmt.Errorf("note snapshot version regressed: %s", meta.NoteID)
+					}
+					note = body
+				}
+				if err := s.api.Context().Err(); err != nil {
+					return err
+				}
+				if !note.IsDeleted {
+					remoteIDs[note.NoteID] = true
+				}
+				if err := s.processNoteSync(note, syncInfo, false); err != nil {
+					return fmt.Errorf("process remote note %s: %w", note.NoteID, err)
+				}
+				if !withContentSnapshot && !note.IsDeleted && note.Files != nil {
+					if err := s.syncAttachmentSet(note); err != nil {
+						return err
+					}
+				}
+				if withContentSnapshot {
+					if err := s.queueSnapshotFiles(note); err != nil {
+						return err
+					}
+				}
+				completed++
+				s.emitItemProgress("notes", completed, 0, 40)
+			}
 		}
 
 		if len(notes) > 0 {
-			currentUsn = notes[len(notes)-1].Usn
+			currentUsn = metadataCursor
 			if err := s.db.UpdateUserSyncState(s.db.GetCurrentUserID(), map[string]int64{"note_usn": currentUsn}); err != nil {
 				return err
 			}
@@ -227,8 +254,8 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 
 		// Snapshot pages already use a small batch size and are processed
 		// serially. Avoid adding an artificial delay to every reset-sync page.
-		if !withContentSnapshot {
-			time.Sleep(500 * time.Millisecond)
+		if !withContentSnapshot && afterUsn >= 0 {
+			time.Sleep(100 * time.Millisecond)
 		}
 	}
 	if afterUsn < 0 {
@@ -247,6 +274,27 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.SyncInfo, repair ...bool) error {
 	if err := s.api.Context().Err(); err != nil {
 		return err
+	}
+	if !serverNote.IsDeleted && !serverNote.ContentPresent && !(len(repair) > 0 && repair[0]) {
+		local, err := s.db.GetNoteSyncState(serverNote.NoteID)
+		if err != nil {
+			return err
+		}
+		if local != nil && local.Usn == serverNote.Usn && !local.NeedsBody && !local.Deleted {
+			if local.Dirty {
+				return nil
+			}
+			if local.NotebookID == "" && serverNote.NotebookID == "" {
+				return nil
+			}
+			nb, err := s.db.GetNotebook(local.NotebookID)
+			if err != nil {
+				return err
+			}
+			if nb != nil && !nb.LocalIsDelete && nb.ServerNotebookID == serverNote.NotebookID {
+				return nil
+			}
+		}
 	}
 	remoteNoteID := serverNote.NoteID
 	serverNoteCopy := *serverNote
