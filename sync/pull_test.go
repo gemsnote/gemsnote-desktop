@@ -51,7 +51,7 @@ func TestTrashedNoteNeedsNoDeletedNotebook(t *testing.T) {
 
 func TestMetadataNotePagesAreBounded(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api2/note/getSyncNotes" || r.URL.Query().Get("maxEntry") != "10" {
+		if r.URL.Path != "/api2/note/getSyncNotes" || r.URL.Query().Get("maxEntry") != "50" {
 			t.Errorf("unexpected metadata page request: %s", r.URL)
 		}
 		w.Write([]byte(`[]`))
@@ -162,13 +162,13 @@ func TestFreshSyncUsesPagedContentSnapshot(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api2/user/getSyncState":
-			w.Write([]byte(`{"Ok":true,"LastSyncUsn":22,"LastSyncTime":0}`))
+			w.Write([]byte(`{"Ok":true,"LastSyncUsn":102,"LastSyncTime":0}`))
 		case "/api2/notebook/getSyncNotebooks":
 			w.Write([]byte(`[{"NotebookId":"remote-book","UserId":"user1","Title":"Book","Usn":1}]`))
 		case "/api2/note/getSyncNotesWithContent":
 			contentCalls++
-			if got := r.URL.Query().Get("maxEntry"); got != "10" {
-				t.Errorf("snapshot maxEntry=%q, want 10", got)
+			if got := r.URL.Query().Get("maxEntry"); got != "50" {
+				t.Errorf("snapshot maxEntry=%q, want 50", got)
 			}
 			var notes []map[string]any
 			if contentCalls > 3 {
@@ -176,12 +176,12 @@ func TestFreshSyncUsesPagedContentSnapshot(t *testing.T) {
 				w.Write([]byte(`[]`))
 				return
 			}
-			wantCursor := []string{"-1", "11", "21"}[contentCalls-1]
+			wantCursor := []string{"-1", "51", "101"}[contentCalls-1]
 			if got := r.URL.Query().Get("afterUsn"); got != wantCursor {
 				t.Errorf("page %d cursor=%q, want %s", contentCalls, got, wantCursor)
 			}
-			start := (contentCalls - 1) * 10
-			end := min(start+10, 21)
+			start := (contentCalls - 1) * 50
+			end := min(start+50, 101)
 			for i := start; i < end; i++ {
 				id := fmt.Sprintf("remote-note-%d", i)
 				if i == 0 {
@@ -215,7 +215,7 @@ func TestFreshSyncUsesPagedContentSnapshot(t *testing.T) {
 	if _, err := syncer.FreshSync(); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < 21; i++ {
+	for i := 0; i < 101; i++ {
 		id := fmt.Sprintf("remote-note-%d", i)
 		if i == 0 {
 			id = "remote-note"
@@ -240,7 +240,7 @@ func TestFreshSyncUsesPagedContentSnapshot(t *testing.T) {
 			t.Fatalf("sync reached 100%% before completion: %+v", progress)
 		}
 	}
-	if completed != 21 || progressEvents[len(progressEvents)-1].Stage != "done" {
+	if completed != 101 || progressEvents[len(progressEvents)-1].Stage != "done" {
 		t.Fatalf("incomplete progress: %d notes, events=%+v", completed, progressEvents)
 	}
 }

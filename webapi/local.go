@@ -203,6 +203,7 @@ func (h *Handler) bootstrap(w http.ResponseWriter) {
 func (h *Handler) noteListItem(n *models.Note) map[string]any {
 	return map[string]any{
 		"NoteId":          n.NoteID,
+		"UserId":          n.UserID,
 		"NotebookId":      n.NotebookID,
 		"Title":           n.Title,
 		"Desc":            n.Desc,
@@ -377,52 +378,6 @@ func (h *Handler) rejectSharedWrite(w http.ResponseWriter, r *http.Request, path
 	return false
 }
 
-func (h *Handler) sortedNotes(user *models.User, notebookID, key, tag, sortField string, trash bool) ([]*models.Note, error) {
-	var (
-		list []*models.Note
-		err  error
-	)
-	switch {
-	case trash:
-		list, err = h.DB.GetTrashNotes(user.ID)
-	case key != "":
-		list, err = h.DB.SearchNotes(user.ID, key)
-	case tag != "":
-		list, err = h.DB.SearchNotesByTag(user.ID, tag)
-	case notebookID != "":
-		if h.ownedNotebook(user.ID, notebookID) == nil {
-			return nil, fmt.Errorf("noAuth")
-		}
-		list, err = h.DB.GetNotes(notebookID)
-	default:
-		list, err = h.DB.GetAllNotes(user.ID)
-	}
-	if err != nil {
-		return nil, err
-	}
-	visible := list[:0]
-	for _, note := range list {
-		if note != nil && note.UserID == user.ID {
-			visible = append(visible, note)
-		}
-	}
-	list = visible
-
-	switch sortField {
-	case "Title":
-		sort.Slice(list, func(i, j int) bool { return strings.ToLower(list[i].Title) < strings.ToLower(list[j].Title) })
-	case "CreatedTime":
-		sort.SliceStable(list, func(i, j int) bool {
-			return timeOrNow(list[i].CreatedTime).After(*timeOrNow(list[j].CreatedTime))
-		})
-	default:
-		sort.SliceStable(list, func(i, j int) bool {
-			return timeOrNow(list[i].UpdatedTime).After(*timeOrNow(list[j].UpdatedTime))
-		})
-	}
-	return list, nil
-}
-
 func (h *Handler) notes(w http.ResponseWriter, r *http.Request) {
 	user := h.requireUser(w)
 	if user == nil {
@@ -432,30 +387,18 @@ func (h *Handler) notes(w http.ResponseWriter, r *http.Request) {
 	if page < 1 {
 		page = 1
 	}
-	list, err := h.sortedNotes(user, h.form(r, "notebookId"), h.form(r, "key"), h.form(r, "tag"), h.form(r, "sort"), h.form(r, "trash") == "true")
+	notebookID := h.form(r, "notebookId")
+	if notebookID != "" && h.ownedNotebook(user.ID, notebookID) == nil {
+		h.fail(w, "noAuth")
+		return
+	}
+	list, err := h.DB.NoteListPage(user.ID, notebookID, h.form(r, "key"), h.form(r, "tag"), h.form(r, "sort"), h.form(r, "trash") == "true", h.form(r, "starred") == "true", page, pageSize)
 	if err != nil {
 		h.fail(w, err.Error())
 		return
 	}
-	if h.form(r, "starred") == "true" {
-		filtered := list[:0]
-		for _, n := range list {
-			if n.IsStar {
-				filtered = append(filtered, n)
-			}
-		}
-		list = filtered
-	}
-	start := (page - 1) * pageSize
-	if start > len(list) {
-		start = len(list)
-	}
-	end := start + pageSize
-	if end > len(list) {
-		end = len(list)
-	}
-	items := make([]map[string]any, 0, end-start)
-	for _, n := range list[start:end] {
+	items := make([]map[string]any, 0, len(list))
+	for _, n := range list {
 		items = append(items, h.noteListItem(n))
 	}
 	h.writeJSON(w, items)
@@ -1498,6 +1441,26 @@ func (h *Handler) restoreHistory(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err = h.OnSync(); err != nil {
 		h.fail(w, err.Error())
+		return
+	}
+	h.ok(w)
+}
+
+func (h *Handler) reorderNotebooks(w http.ResponseWriter, r *http.Request) {
+	user := h.requireUser(w)
+	if user == nil {
+		return
+	}
+	var payload struct {
+		NotebookIDs []string `json:"notebookIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		h.fail(w, "invalidJSON")
+		return
+	}
+	ids := payload.NotebookIDs
+	if err := h.DB.ReorderNotebooks(user.ID, ids); err != nil {
+		h.fail(w, "invalidNotebook")
 		return
 	}
 	h.ok(w)

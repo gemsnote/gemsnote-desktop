@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/gemsnote/gemsnote/models"
@@ -481,4 +482,38 @@ func (d *Database) UpdateNotebookAfterSync(notebookID string, serverNb *models.N
 func (d *Database) PruneDeletedNotebooks(userID string) error {
 	_, err := d.db.Exec(`DELETE FROM notebooks WHERE user_id=? AND local_is_delete=1 AND is_dirty=0 AND NOT EXISTS (SELECT 1 FROM notes WHERE notes.notebook_id=notebooks.notebook_id)`, userID)
 	return err
+}
+
+func (d *Database) ReorderNotebooks(userID string, ids []string) error {
+	if len(ids) == 0 || len(ids) > 5000 {
+		return fmt.Errorf("invalidNotebook")
+	}
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	seen := map[string]bool{}
+	parent := ""
+	for i, id := range ids {
+		if seen[id] {
+			return fmt.Errorf("invalidNotebook")
+		}
+		seen[id] = true
+		var actual string
+		if err = tx.QueryRow(`SELECT COALESCE(parent_notebook_id,'') FROM notebooks WHERE notebook_id=? AND user_id=? AND local_is_delete=0`, id, userID).Scan(&actual); err != nil {
+			return err
+		}
+		if i == 0 {
+			parent = actual
+		} else if parent != actual {
+			return fmt.Errorf("invalidParentNotebook")
+		}
+	}
+	for i, id := range ids {
+		if _, err = tx.Exec(`UPDATE notebooks SET seq=?,is_dirty=1 WHERE notebook_id=? AND user_id=?`, i, id, userID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }

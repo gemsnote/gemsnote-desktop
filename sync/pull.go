@@ -15,7 +15,7 @@ import (
 var imageFileIDRe = regexp.MustCompile(`fileId=([a-zA-Z0-9]{24})`)
 var serverImageRe = regexp.MustCompile(`(https?://[^\s"']+)/api2/file/getImage\?fileId=([a-zA-Z0-9]{24})`)
 
-const freshSyncPageSize = 10
+const freshSyncPageSize = 50
 
 func (s *SyncService) syncNotebooks(afterUsn int64, syncInfo *models.SyncInfo) error {
 	logrus.Info("Syncing notebooks...")
