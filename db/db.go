@@ -87,7 +87,7 @@ func (d *Database) Close() error {
 	return d.db.Close()
 }
 
-const dbSchemaVersion = 5
+const dbSchemaVersion = 6
 
 func (d *Database) migrate() error {
 	migrationSQL, err := migrationsFS.ReadFile("migrations.sql")
@@ -154,6 +154,12 @@ func (d *Database) migrate() error {
 	}
 
 	for v := version + 1; v <= dbSchemaVersion; v++ {
+		if v == 6 {
+			if err := d.migrateOptionalTrashNotebook(); err != nil {
+				return err
+			}
+			continue
+		}
 		tx, err := d.db.Begin()
 		if err != nil {
 			return err

@@ -22,6 +22,7 @@ func (s *SyncService) syncNotebooks(afterUsn int64, syncInfo *models.SyncInfo) e
 
 	currentUsn := afterUsn
 	remoteIDs := make(map[string]bool)
+	deletedIDs := make(map[string]bool)
 	completed := 0
 
 	for {
@@ -38,9 +39,10 @@ func (s *SyncService) syncNotebooks(afterUsn int64, syncInfo *models.SyncInfo) e
 			if err := s.api.Context().Err(); err != nil {
 				return err
 			}
-			// A complete snapshot is a union merge. A remote tombstone must not
-			// erase the only remaining local copy after a database switch.
+			// Remember explicit deletions separately from objects absent
+			// after a database switch. Only the latter are union-merged.
 			if afterUsn < 0 && nb.IsDeleted {
+				deletedIDs[nb.NotebookID] = true
 				continue
 			}
 			if !nb.IsDeleted {
@@ -70,7 +72,7 @@ func (s *SyncService) syncNotebooks(afterUsn int64, syncInfo *models.SyncInfo) e
 	}
 	if afterUsn < 0 {
 		logrus.Infof("Full notebook snapshot received: %d", len(remoteIDs))
-		if err := s.db.ReconcileFullNotebooks(s.db.GetCurrentUserID(), remoteIDs); err != nil {
+		if err := s.db.ReconcileFullNotebooks(s.db.GetCurrentUserID(), remoteIDs, deletedIDs); err != nil {
 			return err
 		}
 		if err := s.db.RestoreNotebookParents(s.db.GetCurrentUserID()); err != nil {
@@ -164,7 +166,9 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 
 	for {
 		pageSize := s.maxEntry
-		if withContentSnapshot && pageSize > freshSyncPageSize {
+		// Bound metadata pages as well as content snapshots. Full sync used to
+		// request 200 notes, including their file metadata, in one round trip.
+		if pageSize > freshSyncPageSize {
 			pageSize = freshSyncPageSize
 		}
 		pageStarted := time.Now()
@@ -187,9 +191,6 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 		for _, note := range notes {
 			if err := s.api.Context().Err(); err != nil {
 				return err
-			}
-			if afterUsn < 0 && note.IsDeleted {
-				continue
 			}
 			if !note.IsDeleted {
 				remoteIDs[note.NoteID] = true
@@ -231,6 +232,9 @@ func (s *SyncService) syncNotesMode(afterUsn int64, syncInfo *models.SyncInfo, w
 		}
 	}
 	if afterUsn < 0 {
+		if err := s.db.PruneDeletedNotebooks(s.db.GetCurrentUserID()); err != nil {
+			return err
+		}
 		logrus.Infof("Full note snapshot received: %d", len(remoteIDs))
 		if err := s.db.RequeueMissingDesktopNotes(s.db.GetCurrentUserID(), remoteIDs); err != nil {
 			return err
@@ -249,10 +253,15 @@ func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.
 	serverNoteCopy.UserID = s.db.GetCurrentUserID()
 	serverNote = &serverNoteCopy
 	if serverNote.IsDeleted {
-		localID, _ := s.db.GetLocalNoteID(serverNote.NoteID)
+		localID, err := s.db.GetLocalNoteID(serverNote.NoteID)
+		if err != nil {
+			return err
+		}
 		if localID != "" {
 			s.deleteNoteFiles(localID)
-			s.db.DeleteNoteForce(localID)
+			if err := s.db.DeleteNoteForce(localID); err != nil {
+				return err
+			}
 			syncInfo.Note.Deletes = append(syncInfo.Note.Deletes, localID)
 		}
 		return nil
@@ -262,7 +271,25 @@ func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.
 	// insert/update; otherwise moved notes appear under the wrong notebook and
 	// notebook counters no longer match the local note rows.
 	if serverNote.NotebookID != "" {
-		if localNotebookID, err := s.db.GetNotebookIDByServerID(serverNote.NotebookID); err == nil && localNotebookID != "" {
+		localNotebookID, err := s.db.GetNotebookIDByServerID(serverNote.NotebookID)
+		if err != nil {
+			return err
+		}
+		if serverNote.IsTrash {
+			if localNotebookID != "" {
+				nb, err := s.db.GetNotebook(localNotebookID)
+				if err != nil {
+					return err
+				}
+				if nb != nil && nb.LocalIsDelete {
+					localNotebookID = ""
+				}
+			}
+			copyNote := *serverNote
+			copyNote.NotebookID = localNotebookID
+			serverNote = &copyNote
+		}
+		if localNotebookID != "" {
 			copyNote := *serverNote
 			copyNote.NotebookID = localNotebookID
 			serverNote = &copyNote
@@ -333,7 +360,7 @@ func (s *SyncService) processNoteSync(serverNote *models.Note, syncInfo *models.
 	if !serverNote.IsStarPresent {
 		serverNote.IsStar = localNote.IsStar
 	}
-	if serverNote.NotebookID == "" {
+	if serverNote.NotebookID == "" && !serverNote.IsTrash {
 		serverNote.NotebookID = localNote.NotebookID
 	}
 

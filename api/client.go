@@ -134,16 +134,18 @@ func (c *Client) getWithClientContext(ctx context.Context, client *resty.Client,
 		allParams[k] = v
 	}
 
-	resp, err := c.authorize(client.R().SetContext(ctx)).SetQueryParams(allParams).Get(path)
+	req := c.authorize(client.R().SetContext(ctx).EnableTrace()).SetQueryParams(allParams)
+	resp, err := req.Get(path)
+	trace := req.TraceInfo()
 	if err != nil {
 		err = c.redactError(err)
-		logrus.Errorf("API GET %s error: %v", path, err)
+		logrus.Errorf("API GET %s error: %v (dns=%s tcp=%s tls=%s reused=%t)", path, err, trace.DNSLookup.Round(time.Millisecond), trace.TCPConnTime.Round(time.Millisecond), trace.TLSHandshake.Round(time.Millisecond), trace.IsConnReused)
 		return nil, err
 	}
 
 	logrus.Debugf("API GET %s status: %d", path, resp.StatusCode())
 	if resp.Time() >= 2*time.Second || path == "note/getSyncNotesWithContent" {
-		logrus.Infof("API GET %s: status=%d elapsed=%s bytes=%d", path, resp.StatusCode(), resp.Time().Round(time.Millisecond), len(resp.Body()))
+		logrus.Infof("API GET %s: status=%d elapsed=%s bytes=%d dns=%s tcp=%s tls=%s first_byte=%s body=%s reused=%t", path, resp.StatusCode(), resp.Time().Round(time.Millisecond), len(resp.Body()), trace.DNSLookup.Round(time.Millisecond), trace.TCPConnTime.Round(time.Millisecond), trace.TLSHandshake.Round(time.Millisecond), trace.ServerTime.Round(time.Millisecond), trace.ResponseTime.Round(time.Millisecond), trace.IsConnReused)
 	}
 	if resp.IsError() {
 		logrus.Errorf("API GET %s failed: status=%d body=%s", path, resp.StatusCode(), strings.TrimSpace(resp.String()))

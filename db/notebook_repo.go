@@ -58,7 +58,7 @@ func (d *Database) GetNotebooks(userID string) ([]*models.Notebook, error) {
 // ReconcileFullNotebooks queues every locally cached notebook absent from the
 // complete server snapshot for verification while retaining its known server
 // ID. Snapshot absence alone is not sufficient evidence to discard identity.
-func (d *Database) ReconcileFullNotebooks(userID string, remoteIDs map[string]bool) error {
+func (d *Database) ReconcileFullNotebooks(userID string, remoteIDs map[string]bool, deletedIDs ...map[string]bool) error {
 	rows, err := d.db.Query(`SELECT notebook_id, server_notebook_id, is_dirty, local_is_new, local_is_delete FROM notebooks WHERE user_id = ?`, userID)
 	if err != nil {
 		return err
@@ -82,6 +82,12 @@ func (d *Database) ReconcileFullNotebooks(userID string, remoteIDs map[string]bo
 		return err
 	}
 	for _, e := range entries {
+		if len(deletedIDs) > 0 && deletedIDs[0][e.remoteID] {
+			if err := d.ApplyRemoteNotebookDelete(e.localID); err != nil {
+				return err
+			}
+			continue
+		}
 		if e.localNew || (e.deleted && e.dirty) {
 			continue
 		}
@@ -261,6 +267,9 @@ func (d *Database) DeleteNotebookForce(notebookID string) error {
 // notes.notebook_id foreign key. Keep such rows as clean, hidden tombstones;
 // they must not remain dirty after the server deletion has been accepted.
 func (d *Database) ApplyRemoteNotebookDelete(notebookID string) error {
+	if _, err := d.db.Exec(`UPDATE notes SET notebook_id=NULL WHERE notebook_id=? AND is_trash=1`, notebookID); err != nil {
+		return err
+	}
 	result, err := d.db.Exec(`
 		DELETE FROM notebooks
 		WHERE notebook_id = ?
@@ -466,5 +475,10 @@ func (d *Database) UpdateNotebookAfterSync(notebookID string, serverNb *models.N
 			is_dirty = 0, local_is_new = 0, local_is_delete = 0
 		WHERE notebook_id = ?
 	`, serverNb.NotebookID, serverNb.Title, localParentID, serverNb.Seq, serverNb.Usn, serverNb.NumberNotes, notebookID)
+	return err
+}
+
+func (d *Database) PruneDeletedNotebooks(userID string) error {
+	_, err := d.db.Exec(`DELETE FROM notebooks WHERE user_id=? AND local_is_delete=1 AND is_dirty=0 AND NOT EXISTS (SELECT 1 FROM notes WHERE notes.notebook_id=notebooks.notebook_id)`, userID)
 	return err
 }

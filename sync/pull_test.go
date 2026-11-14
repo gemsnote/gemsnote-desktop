@@ -12,6 +12,59 @@ import (
 	"github.com/gemsnote/gemsnote/models"
 )
 
+func TestTrashedNoteNeedsNoDeletedNotebook(t *testing.T) {
+	d, err := db.NewInMemory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := d.InsertUser(&models.User{ID: "u", Username: "u"}); err != nil {
+		t.Fatal(err)
+	}
+	d.SetCurrentUser("u")
+	s := NewSyncService(d, api.NewClient())
+	for _, id := range []string{"trash-one", "trash-two"} {
+		note := &models.Note{NoteID: id, NotebookID: "deleted-remote-book", IsTrash: true, ContentPresent: true, Content: "preserved body", Usn: 4}
+		if err := s.processNoteSync(note, models.NewSyncInfo(), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	nb, err := d.GetNotebookByServerID("deleted-remote-book")
+	if err != nil || nb != nil {
+		t.Fatalf("invalid hidden notebook: %+v %v", nb, err)
+	}
+	for _, id := range []string{"trash-one", "trash-two"} {
+		note, err := d.GetNoteByServerID(id)
+		if err != nil || note == nil || note.NotebookID != "" || !note.IsTrash || note.Content != "preserved body" || note.IsDirty {
+			t.Fatalf("invalid trash note: %+v %v", note, err)
+		}
+	}
+	visible, err := d.GetNotebooks("u")
+	if err != nil || len(visible) != 0 {
+		t.Fatalf("hidden notebook visible: %+v %v", visible, err)
+	}
+	dirty, err := d.GetDirtyNotebooks("u")
+	if err != nil || len(dirty) != 0 {
+		t.Fatalf("hidden notebook queued for upload: %+v %v", dirty, err)
+	}
+}
+
+func TestMetadataNotePagesAreBounded(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api2/note/getSyncNotes" || r.URL.Query().Get("maxEntry") != "10" {
+			t.Errorf("unexpected metadata page request: %s", r.URL)
+		}
+		w.Write([]byte(`[]`))
+	}))
+	defer server.Close()
+	client := api.NewClient()
+	client.SetHost(server.URL)
+	svc := &SyncService{api: client, maxEntry: 200}
+	if err := svc.syncNotes(0, models.NewSyncInfo()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestIncrementalSyncUploadsDirtyDataBeforePulling(t *testing.T) {
 	var order []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -487,12 +540,12 @@ func TestFullSyncMergesChangedServerDatabase(t *testing.T) {
 	if err := NewSyncService(database, api.NewClient()).ForceFullSync(); err != nil {
 		t.Fatal(err)
 	}
-	if addedNotebook != 1 || addedNote != 2 {
+	if addedNotebook != 1 || addedNote != 1 {
 		t.Fatalf("uploads: notebooks=%d notes=%d", addedNotebook, addedNote)
 	}
 	oldNote, err := database.GetNote("old-note")
-	if err != nil || oldNote == nil || oldNote.ServerNoteID == "old-note" || oldNote.IsDirty || oldNote.LocalIsDelete {
-		t.Fatalf("old cache not merged: %+v %v", oldNote, err)
+	if err != nil || oldNote != nil {
+		t.Fatalf("explicitly deleted note was resurrected: %+v %v", oldNote, err)
 	}
 	localNote, err := database.GetNote("local-note")
 	if err != nil || localNote == nil || localNote.ServerNoteID == "missing-note" || localNote.IsDirty || localNote.LocalIsDelete {

@@ -33,7 +33,7 @@ func (d *Database) InsertNote(note *models.Note) error {
 			created_time, updated_time, local_edited_time
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		note.ID, note.NoteID, note.ServerNoteID, note.NotebookID, note.UserID,
+		note.ID, note.NoteID, note.ServerNoteID, notebookValue(note.NotebookID, note.IsTrash), note.UserID,
 		note.Title, note.Content, note.Desc, note.Abstract, note.ImgSrc, string(tagsJSON),
 		note.IsMarkdown, note.IsTrash, note.IsBlog, note.IsStar, note.Usn,
 		note.IsDirty, note.ContentIsDirty, note.LocalIsNew, note.LocalIsDelete, note.InitSync,
@@ -56,7 +56,7 @@ func (d *Database) InsertNoteTx(tx *sql.Tx, note *models.Note) error {
 			created_time, updated_time, local_edited_time
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`,
-		note.ID, note.NoteID, note.ServerNoteID, note.NotebookID, note.UserID,
+		note.ID, note.NoteID, note.ServerNoteID, notebookValue(note.NotebookID, note.IsTrash), note.UserID,
 		note.Title, note.Content, note.Desc, note.Abstract, note.ImgSrc, string(tagsJSON),
 		note.IsMarkdown, note.IsTrash, note.IsBlog, note.IsStar, note.Usn,
 		note.IsDirty, note.ContentIsDirty, note.LocalIsNew, note.LocalIsDelete, note.InitSync,
@@ -367,8 +367,8 @@ func (d *Database) ApplyRemoteNote(before, remote *models.Note) error {
 		updated_time = COALESCE(?, updated_time), created_time = COALESCE(?, created_time),
 		init_sync = 0, err = '', is_dirty = 0, content_is_dirty = 0, local_is_new = 0, local_is_delete = 0
 		WHERE note_id = ? AND user_id = ? AND usn = ? AND is_dirty = ? AND content = ?
-		AND title = ? AND tags = ? AND notebook_id = ? AND is_star = ? AND is_trash = ? AND local_is_delete = ?`,
-		remote.Content, remote.NotebookID, remote.Title, remote.Desc, remote.Abstract, remote.ImgSrc, string(tags),
+		AND title = ? AND tags = ? AND COALESCE(notebook_id, '') = ? AND is_star = ? AND is_trash = ? AND local_is_delete = ?`,
+		remote.Content, notebookValue(remote.NotebookID, remote.IsTrash), remote.Title, remote.Desc, remote.Abstract, remote.ImgSrc, string(tags),
 		remote.IsMarkdown, remote.IsTrash, remote.IsBlog, remote.IsStar, remote.Usn,
 		noteTime(remote.UpdatedTime), noteTime(remote.CreatedTime), before.NoteID, before.UserID, before.Usn, before.IsDirty, before.Content,
 		before.Title, string(beforeTags), before.NotebookID, before.IsStar, before.IsTrash, before.LocalIsDelete)
@@ -395,7 +395,7 @@ func noteTime(t *time.Time) interface{} {
 func (d *Database) UpdateNoteForce(note *models.Note, needReloadContent bool) error {
 	tagsJSON, _ := json.Marshal(note.Tags)
 	notebookID := note.NotebookID
-	if notebookID == "" {
+	if notebookID == "" && !note.IsTrash {
 		// Metadata-only server responses may omit NotebookId. Preserve the
 		// existing local relationship instead of violating the FK constraint.
 		if existing, _ := d.GetNote(note.NoteID); existing != nil {
@@ -415,7 +415,7 @@ func (d *Database) UpdateNoteForce(note *models.Note, needReloadContent bool) er
 			is_dirty = 0, content_is_dirty = 0, local_is_new = 0, local_is_delete = 0, init_sync = ?,
 			err = '', updated_time = COALESCE(?, updated_time)
 		WHERE note_id = ?
-	`, notebookID, note.Title, note.Desc, note.Abstract, note.ImgSrc, string(tagsJSON),
+	`, notebookValue(notebookID, note.IsTrash), note.Title, note.Desc, note.Abstract, note.ImgSrc, string(tagsJSON),
 		note.IsMarkdown, note.IsTrash, note.IsBlog, note.IsStar, note.Usn, initSync, noteTime(note.UpdatedTime), note.NoteID)
 	return err
 }
@@ -462,13 +462,29 @@ func (d *Database) DeleteNote(noteID string) error {
 }
 
 func (d *Database) DeleteNoteForce(noteID string) error {
-	query, args := `DELETE FROM notes WHERE server_note_id = ?`, []any{noteID}
+	tx, err := d.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	query, args := `SELECT COUNT(*) FROM notes WHERE note_id=?`, []any{noteID}
 	if userID := d.GetCurrentUserID(); userID != "" {
-		query += ` AND user_id = ?`
+		query += ` AND user_id=?`
 		args = append(args, userID)
 	}
-	_, err := d.db.Exec(query, args...)
-	return err
+	var found int
+	if err = tx.QueryRow(query, args...).Scan(&found); err != nil {
+		return err
+	}
+	if found == 0 {
+		return nil
+	}
+	for _, q := range []string{`DELETE FROM note_histories WHERE note_id=?`, `DELETE FROM attachs WHERE note_id=?`, `DELETE FROM notes WHERE note_id=?`} {
+		if _, err = tx.Exec(q, noteID); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 func (d *Database) DeleteLocalNote(noteID string) error {
@@ -477,6 +493,22 @@ func (d *Database) DeleteLocalNote(noteID string) error {
 }
 
 func (d *Database) SetNoteTrash(noteID string, isTrash bool) error {
+	if !isTrash {
+		note, err := d.GetNote(noteID)
+		if err != nil {
+			return err
+		}
+		if note == nil || note.NotebookID == "" {
+			return fmt.Errorf("invalidNotebook")
+		}
+		nb, err := d.GetNotebook(note.NotebookID)
+		if err != nil {
+			return err
+		}
+		if nb == nil || nb.LocalIsDelete || nb.UserID != note.UserID {
+			return fmt.Errorf("invalidNotebook")
+		}
+	}
 	val := 0
 	if isTrash {
 		val = 1
@@ -590,10 +622,11 @@ func (d *Database) UpdateNoteAfterSync(note *models.Note, isAdd bool) error {
 func (d *Database) scanNote(row *sql.Row) (*models.Note, error) {
 	var note models.Note
 	var tagsJSON string
+	var notebookID sql.NullString
 	var createdTime, updatedTime, conflictTime, localEditedTime sql.NullInt64
 
 	err := row.Scan(
-		&note.ID, &note.NoteID, &note.ServerNoteID, &note.NotebookID, &note.UserID,
+		&note.ID, &note.NoteID, &note.ServerNoteID, &notebookID, &note.UserID,
 		&note.Title, &note.Content, &note.Desc, &note.Abstract, &note.ImgSrc, &tagsJSON,
 		&note.IsMarkdown, &note.IsTrash, &note.IsBlog, &note.IsStar, &note.Usn,
 		&note.IsDirty, &note.ContentIsDirty, &note.LocalIsNew, &note.LocalIsDelete, &note.InitSync,
@@ -607,6 +640,7 @@ func (d *Database) scanNote(row *sql.Row) (*models.Note, error) {
 		return nil, err
 	}
 
+	note.NotebookID = notebookID.String
 	if tagsJSON != "" {
 		json.Unmarshal([]byte(tagsJSON), &note.Tags)
 	}
@@ -635,10 +669,11 @@ func (d *Database) scanNotes(rows *sql.Rows) ([]*models.Note, error) {
 	for rows.Next() {
 		var note models.Note
 		var tagsJSON string
+		var notebookID sql.NullString
 		var createdTime, updatedTime, conflictTime, localEditedTime sql.NullInt64
 
 		err := rows.Scan(
-			&note.ID, &note.NoteID, &note.ServerNoteID, &note.NotebookID, &note.UserID,
+			&note.ID, &note.NoteID, &note.ServerNoteID, &notebookID, &note.UserID,
 			&note.Title, &note.Content, &note.Desc, &note.Abstract, &note.ImgSrc, &tagsJSON,
 			&note.IsMarkdown, &note.IsTrash, &note.IsBlog, &note.IsStar, &note.Usn,
 			&note.IsDirty, &note.ContentIsDirty, &note.LocalIsNew, &note.LocalIsDelete, &note.InitSync,
@@ -649,6 +684,7 @@ func (d *Database) scanNotes(rows *sql.Rows) ([]*models.Note, error) {
 			return nil, err
 		}
 
+		note.NotebookID = notebookID.String
 		if tagsJSON != "" {
 			json.Unmarshal([]byte(tagsJSON), &note.Tags)
 		}
@@ -751,4 +787,11 @@ func (d *Database) GetNoteFiles(noteID string) ([]*models.FileRef, error) {
 	}
 
 	return files, nil
+}
+
+func notebookValue(id string, trash bool) any {
+	if id == "" && trash {
+		return nil
+	}
+	return id
 }
